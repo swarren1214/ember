@@ -53,7 +53,7 @@ final class EmberData {
     func ledger() async -> Result<SufficeLedger, EmberZoneError> {
         locate()
         await budget.refresh()
-        let ledger = SufficeLedger(records: Array(budget.records.values))
+        let ledger = await budget.snapshot(SufficeLedger.init(records:))
         if ledger.isEmpty, let error = budget.lastError { return .failure(error) }
         return .success(ledger)
     }
@@ -61,7 +61,7 @@ final class EmberData {
     func familyBoard() async -> Result<CalomaFamily, EmberZoneError> {
         locate()
         await family.refresh()
-        let value = CalomaFamily(records: Array(family.records.values))
+        let value = await family.snapshot(CalomaFamily.init(records:))
         if value.isEmpty, let error = family.lastError { return .failure(error) }
         return .success(value)
     }
@@ -69,7 +69,7 @@ final class EmberData {
     func groceries() async -> Result<BigTableGroceries, EmberZoneError> {
         locate()
         await kitchen.refresh()
-        let value = BigTableGroceries(records: Array(kitchen.records.values))
+        let value = await kitchen.snapshot(BigTableGroceries.init(records:))
         if value.activeRecordName == nil, let error = kitchen.lastError { return .failure(error) }
         return .success(value)
     }

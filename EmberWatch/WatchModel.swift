@@ -35,7 +35,8 @@ final class WatchModel: NSObject {
 
     private(set) var phase: Phase = .face
     private(set) var context: EmberWatchContext?
-    private(set) var isIPhoneReachable = false
+    /// Starts as reachable (the usual case) so nothing flashes before WatchConnectivity knows.
+    private(set) var isIPhoneReachable = true
 
     @ObservationIgnored private let speaker = WatchSpeaker()
     @ObservationIgnored private let log = Logger(subsystem: "com.stephenwarren.ember.watch", category: "model")
@@ -59,7 +60,7 @@ final class WatchModel: NSObject {
         phase = .thinking(question)
         Task {
             let reply: EmberWatchReply
-            if WCSession.default.isReachable, let tethered = await askIPhone(question) {
+            if WCSession.default.isReachable, let tethered = await askIPhone(question, within: 20) {
                 reply = tethered
             } else {
                 reply = await WatchBrain.shared.ask(question, context: context)
@@ -74,12 +75,14 @@ final class WatchModel: NSObject {
         phase = .face
     }
 
-    /// Tethered: the iPhone answers. Nil when it stopped answering (out of range mid-question).
-    private func askIPhone(_ question: String) async -> EmberWatchReply? {
+    /// Tethered: the iPhone answers. Nil when it stopped answering (out of range mid-question)
+    /// or took longer than `seconds`; the Watch then answers on its own.
+    private func askIPhone(_ question: String, within seconds: Double) async -> EmberWatchReply? {
         let ask = EmberWatchAsk(id: UUID(), text: question)
         guard let data = EmberWire.encode(ask) else { return nil }
         return await withCheckedContinuation { continuation in
             let once = WatchOnce(continuation)
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { once.resume(nil) }
             WCSession.default.sendMessage([EmberWire.ask: data]) { response in
                 once.resume(EmberWire.decode(EmberWatchReply.self, from: response[EmberWire.reply] as? Data))
             } errorHandler: { error in
@@ -94,8 +97,21 @@ final class WatchModel: NSObject {
         self.context = context
     }
 
+    @ObservationIgnored private var unreachableSince: Task<Void, Never>?
+
+    /// Reachability flickers as the iPhone app comes and goes in the background. Out of reach
+    /// counts only after it has stayed that way for a while, so the screen doesn't keep changing.
     fileprivate func reachabilityChanged(_ reachable: Bool) {
-        isIPhoneReachable = reachable
+        unreachableSince?.cancel()
+        if reachable {
+            isIPhoneReachable = true
+            return
+        }
+        unreachableSince = Task {
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled else { return }
+            isIPhoneReachable = false
+        }
     }
 }
 

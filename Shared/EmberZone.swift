@@ -32,7 +32,9 @@ final class EmberZone {
 
     let zoneName: String
     /// Records by name ("LedgerEntry.6F1C…" for Suffice, a UUID for Caloma).
-    private(set) var records: [String: CKRecord] = [:]
+    private(set) var records: [String: CKRecord] = [:] {
+        didSet { version &+= 1 }
+    }
     private(set) var lastFetched: Date?
     private(set) var lastError: EmberZoneError?
 
@@ -104,6 +106,23 @@ final class EmberZone {
 
     /// Fresh enough to answer from without fetching again.
     var isFresh: Bool { lastFetched.map { Date.now.timeIntervalSince($0) < 60 } ?? false }
+
+    /// Bumped whenever the mirror changes, so parsed snapshots know when they're stale.
+    private var version = 0
+    private var snapshots: [ObjectIdentifier: (version: Int, value: any Sendable)] = [:]
+
+    /// The mirror read into an app's model (a ledger, a family board), built off the main thread
+    /// and reused until the mirror changes. Reading thousands of sealed fields on the main thread
+    /// for every question is what froze the orb while Ember was thinking.
+    func snapshot<T: Sendable>(_ make: @escaping @Sendable ([CKRecord]) -> T) async -> T {
+        let key = ObjectIdentifier(T.self)
+        if let cached = snapshots[key], cached.version == version, let value = cached.value as? T { return value }
+        let records = Array(self.records.values)
+        let built = version
+        let value = await Task.detached(priority: .userInitiated) { make(records) }.value
+        if built == version { snapshots[key] = (built, value) }
+        return value
+    }
 
     func records(ofType type: String) -> [CKRecord] {
         records.values.filter { $0.recordType == type }

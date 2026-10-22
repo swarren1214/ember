@@ -44,8 +44,6 @@ final class EmberConversation {
     private(set) var phase: Phase = .idle
     /// What you're saying now (live).
     private(set) var transcript = ""
-    /// Microphone loudness, 0...1, for the orb.
-    private(set) var level: Double = 0
     /// The question being answered.
     private(set) var question = ""
     /// The answer being written, as it streams.
@@ -145,8 +143,18 @@ final class EmberConversation {
 
     /// Ask without speaking (a suggestion chip, typing, Siri). Ember still answers out loud.
     func ask(_ text: String) {
+        // Thinking at once; the audio (for the spoken answer) starts alongside.
+        exchange += 1
+        let current = exchange
+        speaker.stop()
+        clearTurn()
+        question = text
+        liveAnswer = ""
+        localReply = nil
+        phase = .thinking
         Task {
             if !audio.isRunning { try? await startAudio() }
+            guard current == exchange else { return }
             send(text)
         }
     }
@@ -225,9 +233,9 @@ final class EmberConversation {
         }
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         let (stream, continuation) = AsyncStream.makeStream(of: AnalyzerInput.self)
-        let feed = EmberMicrophoneFeed(continuation: continuation, converter: EmberPCMConverter(target: format)) { [weak self] value in
-            let conversation = self
-            Task { @MainActor in conversation?.levelChanged(value) }
+        // The orb reads the level each frame; nothing hops to the main thread for it.
+        let feed = EmberMicrophoneFeed(continuation: continuation, converter: EmberPCMConverter(target: format)) { value in
+            EmberLevelMeter.shared.value = value
         }
         self.analyzer = analyzer
         self.feed = feed
@@ -253,7 +261,7 @@ final class EmberConversation {
         watcher?.cancel()
         watcher = nil
         feed?.setMuted(true)
-        level = 0
+        EmberLevelMeter.shared.value = 0
         teardown?.cancel()
         guard audio.isRunning else { return }
         teardown = Task { [weak self] in
@@ -280,14 +288,10 @@ final class EmberConversation {
             Task { await analyzer.cancelAndFinishNow() }
         }
         analyzer = nil
-        level = 0
+        EmberLevelMeter.shared.value = 0
         ownPeak = nil
         farPhrases = 0
         isNoisyRoom = false
-    }
-
-    private func levelChanged(_ value: Double) {
-        level = phase == .listening ? value : 0
     }
 
     private func clearTurn() {
@@ -482,6 +486,7 @@ final class EmberConversation {
         // Muted while Ember thinks: nothing heard now belongs to anything. It listens again
         // (for barge-in) once it starts talking.
         feed?.setMuted(true)
+        EmberLevelMeter.shared.value = 0
         watcher?.cancel()
         phase = .thinking
         question = text

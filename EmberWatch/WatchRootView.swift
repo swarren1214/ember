@@ -51,7 +51,7 @@ struct WatchRootView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Talk to Ember")
 
-            Text("Tap to talk")
+            Text("Tap the orb to ask")
                 .font(.headline)
             if let glance = model.glances.first {
                 Text("\(glance.detail): \(glance.title)")
@@ -62,7 +62,9 @@ struct WatchRootView: View {
                     .padding(.vertical, 5)
                     .background(.white.opacity(0.08), in: .capsule)
             }
-            if !model.isIPhoneReachable && !signedIn {
+            // Only when asking from the Watch alone is possible (Cloud Help with Claude) and the
+            // iPhone has stayed out of reach (see WatchModel.reachabilityChanged).
+            if !model.isIPhoneReachable, !signedIn, model.context?.allowsClaude == true {
                 SignInWithAppleButton(.signIn) { request in
                     nonce = WatchAccount.prepare(request)
                 } onCompletion: { result in

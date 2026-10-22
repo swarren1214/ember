@@ -24,30 +24,60 @@ import SwiftUI
 //
 // The orb draws past its frame (the halo needs the room); place it by its frame as usual.
 
-enum EmberOrbMood: Equatable {
+nonisolated enum EmberOrbMood: Equatable, Sendable {
     case idle, listening, thinking, answering
+}
+
+/// The microphone's loudness for the orb, written on the audio thread and read each frame. It
+/// isn't observed: the orb redraws on its own clock, so the level never re-renders the screen
+/// around it (twenty screen updates a second while listening were part of the stutter).
+nonisolated final class EmberLevelMeter: @unchecked Sendable {
+    static let shared = EmberLevelMeter()
+    private let lock = NSLock()
+    private var stored = 0.0
+
+    var value: Double {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
 }
 
 struct EmberOrb: View {
     var mood: EmberOrbMood
-    /// Microphone loudness, 0...1 (listening).
+    /// Microphone loudness, 0...1 (listening), when it's passed in (the Watch).
     var level: Double = 0
+    /// Or read each frame from a meter (the iPhone).
+    var meter: EmberLevelMeter?
     /// Ember is speaking (answering): the glow follows a speech-like rhythm.
     var speaking: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var engine = EmberOrbEngine()
+    @State private var clock = EmberOrbClock()
 
     /// How far past its frame the halo reaches, as a multiple of the frame.
     private static let bleed: CGFloat = 2.2
 
     var body: some View {
+        #if os(watchOS)
+        // The Watch can't redraw blurred layers every frame (it stalled the whole app): a few
+        // soft gradients moved by Core Animation instead, with the same colors and moods.
+        EmberOrbLite(mood: mood, speaking: speaking)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        #else
+        canvasBody
+        #endif
+    }
+
+    private var canvasBody: some View {
         GeometryReader { proxy in
             let side = min(proxy.size.width, proxy.size.height)
             TimelineView(.animation) { timeline in
-                let _ = engine.step(to: timeline.date, mood: mood, level: level, speaking: speaking, reduceMotion: reduceMotion)
-                Canvas { context, size in
-                    engine.draw(in: &context, size: size, orbRadius: side / 2)
+                let frame = clock.advance(to: timeline.date, mood: mood, level: meter?.value ?? level, speaking: speaking, reduceMotion: reduceMotion)
+                // Drawn off the main thread (from this frame's copy of the state), so a busy
+                // moment elsewhere doesn't freeze it.
+                Canvas(rendersAsynchronously: true) { @Sendable context, size in
+                    frame.draw(in: &context, size: size, orbRadius: side / 2)
                 }
                 .frame(width: side * Self.bleed, height: side * Self.bleed)
             }
@@ -58,9 +88,19 @@ struct EmberOrb: View {
     }
 }
 
-/// The orb's state from frame to frame: phases, eased values and sparks. A class, mutated as
-/// frames are drawn; it isn't observed, so it never causes a redraw of its own.
-final class EmberOrbEngine {
+/// Keeps the orb's state between frames. Not observed, so it never causes a redraw of its own.
+final class EmberOrbClock {
+    private var engine = EmberOrbEngine()
+
+    func advance(to date: Date, mood: EmberOrbMood, level: Double, speaking: Bool, reduceMotion: Bool) -> EmberOrbEngine {
+        engine.step(to: date, mood: mood, level: level, speaking: speaking, reduceMotion: reduceMotion)
+        return engine
+    }
+}
+
+/// The orb's state for one frame: phases, eased values and sparks. A value, so a frame being
+/// drawn on another thread never sees the next one being worked out.
+nonisolated struct EmberOrbEngine: Sendable {
     private struct Spark {
         var angle: Double
         var distance: Double
@@ -84,16 +124,21 @@ final class EmberOrbEngine {
     private var sparks: [Spark] = []
     private var mood: EmberOrbMood = .idle
 
+    /// The flame is laid down a few times and added together: a wide, faint bloom (the flame
+    /// drawn larger; its gradients are already soft, so it needs no blur), the body with one
+    /// modest blur, and a faint crisp pass. Blurring a large layer is the expensive part of a
+    /// frame, and while Ember's voice and the on-device model share the GPU, a frame that blurs
+    /// three big layers waits its turn and the orb stutters. One small blur keeps it smooth.
+    private struct Pass { var scale: Double; var blur: Double; var opacity: Double }
     #if os(watchOS)
-    /// The Watch draws two passes and fewer sparks.
-    private static let passes: [(blur: Double, opacity: Double)] = [(0.5, 0.6), (0.14, 1.0)]
+    private static let passes = [Pass(scale: 1.6, blur: 0, opacity: 0.4), Pass(scale: 1, blur: 0.1, opacity: 1)]
     private static let sparkRate = 10.0
     #else
-    private static let passes: [(blur: Double, opacity: Double)] = [(0.55, 0.55), (0.16, 0.9), (0.05, 0.35)]
+    private static let passes = [Pass(scale: 1.7, blur: 0, opacity: 0.38), Pass(scale: 1, blur: 0.1, opacity: 0.95), Pass(scale: 1, blur: 0, opacity: 0.3)]
     private static let sparkRate = 22.0
     #endif
 
-    func step(to date: Date, mood: EmberOrbMood, level input: Double, speaking: Bool, reduceMotion: Bool) {
+    mutating func step(to date: Date, mood: EmberOrbMood, level input: Double, speaking: Bool, reduceMotion: Bool) {
         let dt = min(max(date.timeIntervalSince(lastDate ?? date), 0), 0.05)
         lastDate = date
         self.mood = mood
@@ -161,11 +206,10 @@ final class EmberOrbEngine {
             )
         )
 
-        // Sparks, softly blurred, behind the flame.
+        // Sparks behind the flame (soft gradients, no blur).
         if !sparks.isEmpty {
             var sparkContext = context
             sparkContext.blendMode = .plusLighter
-            sparkContext.addFilter(.blur(radius: max(1, r * 0.03)))
             for spark in sparks {
                 let point = CGPoint(x: center.x + cos(spark.angle) * r * spark.distance,
                                     y: center.y + sin(spark.angle) * r * spark.distance)
@@ -189,11 +233,16 @@ final class EmberOrbEngine {
         for pass in Self.passes {
             var passContext = context
             passContext.blendMode = .plusLighter
-            passContext.opacity = pass.opacity * (pass.blur > 0.4 ? min(1.4, brightness) : 1)
-            passContext.addFilter(.blur(radius: max(1, r * pass.blur)))
-            passContext.drawLayer { layer in
-                layer.blendMode = .plusLighter
-                self.drawFlame(in: &layer, center: center, radius: r)
+            passContext.opacity = pass.opacity * (pass.scale > 1 ? min(1.4, brightness) : 1)
+            let radius = r * pass.scale
+            if pass.blur > 0 {
+                passContext.addFilter(.blur(radius: max(1, r * pass.blur)))
+                passContext.drawLayer { layer in
+                    layer.blendMode = .plusLighter
+                    self.drawFlame(in: &layer, center: center, radius: radius)
+                }
+            } else {
+                self.drawFlame(in: &passContext, center: center, radius: radius)
             }
         }
     }
@@ -275,6 +324,86 @@ final class EmberOrbEngine {
         let syllable = max(0, sin(t * 2 * .pi * 4.6) * 0.6 + sin(t * 2 * .pi * 2.1 + 2) * 0.4)
         let jitter = 0.75 + 0.25 * sin(t * 13.7) * sin(t * 7.1)
         return phrase * syllable * jitter
+    }
+}
+
+/// The orb drawn cheaply: three soft blobs turning at different speeds and a breathing core.
+/// Every motion is a repeating SwiftUI animation, which the system runs without redrawing the
+/// view (no per-frame work in the app). Used on Apple Watch.
+struct EmberOrbLite: View {
+    var mood: EmberOrbMood
+    var speaking: Bool = false
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var turning = false
+
+    private var glow: Double {
+        switch mood {
+        case .idle: 0.5
+        case .listening: 0.8
+        case .thinking: 0.65
+        case .answering: speaking ? 0.7 : 0.45
+        }
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let side = min(proxy.size.width, proxy.size.height)
+            ZStack {
+                // Halo.
+                Circle()
+                    .fill(RadialGradient(colors: [Self.rgb(1, 0.44, 0.16, 0.45 * glow), Self.rgb(1, 0.31, 0.12, 0.12 * glow), .clear],
+                                         center: .center, startRadius: 0, endRadius: side * 1.05))
+                    .frame(width: side * 2.1, height: side * 2.1)
+                blob(side * 1.05, focus: UnitPoint(x: 0.34, y: 0.34),
+                     colors: [Self.rgb(1, 0.835, 0.573, 0.85), Self.rgb(1, 0.478, 0.184, 0.7), Self.rgb(1, 0.275, 0.098, 0.15), .clear])
+                    .rotationEffect(.degrees(turning ? 360 : 0))
+                blob(side, focus: UnitPoint(x: 0.64, y: 0.64),
+                     colors: [Self.rgb(1, 0.29, 0.18, 0.7), Self.rgb(0.84, 0.157, 0.275, 0.3), .clear])
+                    .rotationEffect(.degrees(turning ? -360 : 0))
+                // Core: breathes, faster while thinking.
+                EmberOrbCore(side: side, period: mood == .thinking ? 0.9 : 2.4, still: reduceMotion)
+                    .id(mood)
+            }
+            .frame(width: side, height: side)
+            .blendMode(.plusLighter)
+            .compositingGroup()
+        }
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.linear(duration: 9).repeatForever(autoreverses: false)) { turning = true }
+        }
+    }
+
+    private func blob(_ size: CGFloat, focus: UnitPoint, colors: [Color]) -> some View {
+        Circle()
+            .fill(RadialGradient(colors: colors, center: focus, startRadius: 0, endRadius: size * 0.55))
+            .frame(width: size, height: size)
+    }
+
+    private static func rgb(_ red: Double, _ green: Double, _ blue: Double, _ alpha: Double) -> Color {
+        Color(.sRGB, red: red, green: green, blue: blue, opacity: alpha)
+    }
+}
+
+/// The orb's bright core, breathing at its own pace (a new one starts when the mood changes).
+private struct EmberOrbCore: View {
+    let side: CGFloat
+    let period: Double
+    let still: Bool
+    @State private var expanded = false
+
+    var body: some View {
+        Circle()
+            .fill(RadialGradient(colors: [Color(.sRGB, red: 1, green: 0.98, blue: 0.94, opacity: 0.95),
+                                          Color(.sRGB, red: 1, green: 0.84, blue: 0.63, opacity: 0.45), .clear],
+                                 center: .center, startRadius: 0, endRadius: side * 0.32))
+            .frame(width: side * 0.64, height: side * 0.64)
+            .scaleEffect(expanded ? 1.1 : 0.92)
+            .onAppear {
+                guard !still else { return }
+                withAnimation(.easeInOut(duration: period).repeatForever()) { expanded = true }
+            }
     }
 }
 

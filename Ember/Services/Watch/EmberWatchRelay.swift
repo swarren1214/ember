@@ -16,8 +16,11 @@ final class EmberWatchRelay: NSObject {
     private let log = Logger(subsystem: "com.stephenwarren.ember", category: "watch")
     private var observer: NSObjectProtocol?
 
+    private var started = false
+
     func start() {
-        guard WCSession.isSupported() else { return }
+        guard WCSession.isSupported(), !started else { return }
+        started = true
         let session = WCSession.default
         session.delegate = self
         session.activate()

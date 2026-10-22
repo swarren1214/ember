@@ -27,6 +27,13 @@ final class EmberAppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         // The household syncs through CloudKit's silent pushes.
         application.registerForRemoteNotifications()
+        // The Watch can wake Ember in the background with a question; no screen appears then,
+        // so everything a turn needs starts here rather than in the root view.
+        if !ScreenshotMode.isOn {
+            HearthHouseholdStore.shared.start(app: .ember)
+            EmberContext.shared.start()
+            EmberWatchRelay.shared.start()
+        }
         return true
     }
 

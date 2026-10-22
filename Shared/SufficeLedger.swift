@@ -120,6 +120,7 @@ nonisolated struct SufficeLedger: Sendable {
     init() {}
 
     init(records: [CKRecord]) {
+        let decoder = JSONDecoder()
         for record in records {
             guard let (type, id) = Self.parse(record.recordID.recordName) else { continue }
             switch type {
@@ -136,7 +137,7 @@ nonisolated struct SufficeLedger: Sendable {
                 ))
             case "LedgerEntry":
                 let splitsJSON = record.sealedText("splitsJSON") ?? ""
-                let splits = splitsJSON.data(using: .utf8).flatMap { try? JSONDecoder().decode([SufficeSplit].self, from: $0) } ?? []
+                let splits = splitsJSON.data(using: .utf8).flatMap { try? decoder.decode([SufficeSplit].self, from: $0) } ?? []
                 entries.append(SufficeEntry(
                     id: id,
                     recordName: record.recordID.recordName,

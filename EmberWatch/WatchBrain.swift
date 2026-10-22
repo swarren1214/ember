@@ -135,7 +135,7 @@ final class WatchBrain {
             return context.facts.isEmpty ? "No facts shared yet." : "As of \(context.updatedAt.formatted(date: .abbreviated, time: .shortened)):\n" + context.facts.joined(separator: "\n")
         case "spending", "budgets", "bills":
             await budget.refresh()
-            let ledger = SufficeLedger(records: Array(budget.records.values))
+            let ledger = await budget.snapshot(SufficeLedger.init(records:))
             guard !ledger.isEmpty else { return budget.lastError?.errorDescription ?? "Suffice's budget isn't in iCloud yet." }
             switch name {
             case "spending": return EmberSkills.spending(ledger, range: arg("range"), budget: arg("budget"), place: arg("place"), person: arg("person")).facts
@@ -144,7 +144,7 @@ final class WatchBrain {
             }
         case "chores", "family_calendar":
             await family.refresh()
-            let board = CalomaFamily(records: Array(family.records.values))
+            let board = await family.snapshot(CalomaFamily.init(records:))
             guard !board.isEmpty else { return family.lastError?.errorDescription ?? "Caloma's family isn't in iCloud yet." }
             return name == "chores"
                 ? EmberSkills.chores(board, day: arg("day"), person: arg("person")).facts

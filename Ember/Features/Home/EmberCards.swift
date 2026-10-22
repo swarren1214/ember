@@ -8,13 +8,12 @@ struct EmberCardView: View {
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             if let app = card.app {
                 HStack(spacing: 7) {
                     EmberAppTile(app: app, size: 20)
-                    Text(app.displayName.uppercased())
-                        .font(.caption.weight(.semibold))
-                        .tracking(0.6)
+                    Text(app.displayName)
+                        .font(.footnote.weight(.semibold))
                         .foregroundStyle(EmberTheme.ash)
                 }
             }
@@ -30,9 +29,9 @@ struct EmberCardView: View {
                 .buttonStyle(.glass)
             }
         }
-        .padding(16)
+        .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .emberGlass(cornerRadius: 24)
+        .emberGlass(cornerRadius: 26)
     }
 
     @ViewBuilder

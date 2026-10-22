@@ -10,9 +10,11 @@ enum EmberTheme {
     /// Accent text on dark surfaces, where the full orange is too strong for words.
     static let accentSoft = Color(red: 1.0, green: 0.698, blue: 0.478)      // #FFB27A
     static let coal = Color(red: 0.055, green: 0.043, blue: 0.039)          // #0E0B0A
-    static let ash = Color(red: 0.659, green: 0.620, blue: 0.588)           // #A89E96
-    static let smoke = Color(red: 0.522, green: 0.478, blue: 0.447)         // #857A72
-    static let text = Color(red: 0.961, green: 0.937, blue: 0.918)          // #F5EFEA
+    /// Text in the system's colors, like every Hearth app (Ember is always dark, so these are
+    /// white and its greys).
+    static let text = Color.primary
+    static let ash = Color.secondary
+    static let smoke = Color(uiColor: .tertiaryLabel)
     static let success = Color(red: 0.498, green: 0.867, blue: 0.682)       // #7FDDAE
 
     /// Each Hearth app's own color, for source tiles.

@@ -28,6 +28,7 @@ struct EmberTurn: Identifiable {
     var isNotice = false
     /// Ember asked "which one?" or "should I?": listen for the answer.
     var asksBack = false
+    var askedAt = Date.now
 }
 
 enum EmberClient: String {
@@ -80,6 +81,13 @@ final class EmberBrain {
         defer { isThinking = false }
         toolbox.beginTurn()
         EmberTrace.shared.begin(text)
+
+        // Earlier turns go to the model only when this one builds on them. Otherwise the small
+        // on-device model latches onto the last question and answers it again.
+        let followsUp = Self.isFollowUp(text, after: turns.last)
+        if !followsUp { cloudHistory = []; redactor = nil }
+        context = followsUp ? Array(turns.suffix(2)) : []
+        EmberTrace.shared.note(followsUp ? "follow-up" : "new question")
 
         let decision = await EmberRouter.decide(text, onDevice: Self.onDeviceAvailable)
         let tools = toolbox.tools(for: decision.domains)
@@ -168,9 +176,29 @@ final class EmberBrain {
 
     // MARK: On device
 
-    /// The last few exchanges, for follow-ups ("and last month?", "text her that").
+    /// The exchanges this question builds on (empty for a new question).
+    @ObservationIgnored private var context: [EmberTurn] = []
+
     private var recent: [(String, String)] {
-        turns.suffix(3).map { ($0.question, $0.answer) }
+        context.map { ($0.question, $0.answer) }
+    }
+
+    /// Whether a question continues the last exchange ("and last month?", "text her that",
+    /// "the one on Main", "yes"), rather than starting something new. Only within a couple of
+    /// minutes of the last answer; after Ember asked something back, the reply always counts.
+    static func isFollowUp(_ question: String, after last: EmberTurn?, now: Date = .now) -> Bool {
+        guard let last, now.timeIntervalSince(last.askedAt) < 150 else { return false }
+        if last.asksBack { return true }
+        let words = EmberConversation.words(question)
+        guard let first = words.first else { return false }
+        let openers: Set<String> = ["and", "also", "but", "or", "then", "so", "ok", "okay", "yes", "yeah", "no", "nope", "sure"]
+        let leadIns = ["what about", "how about", "and ", "also ", "same for", "what else", "how much was", "which one", "the one", "that one", "do it", "go ahead", "send it", "text her", "text him", "call her", "call him", "tell her", "tell him"]
+        let pointers: Set<String> = ["her", "him", "them", "that", "those", "there", "instead", "too", "else", "again", "same"]
+        let lower = question.lowercased()
+        if leadIns.contains(where: { lower.hasPrefix($0) }) { return true }
+        // Short, and pointing back at something ("and last month?", "how about Ella").
+        if words.count <= 5, openers.contains(first) || words.contains(where: pointers.contains) { return true }
+        return false
     }
 
     private func respondOnDevice(_ question: String, tools specs: [EmberToolSpec]) async throws -> String {
@@ -381,7 +409,7 @@ enum EmberPrompt {
             text += "\n\nWhat they've asked you to remember:\n" + remembered.map { "- \($0)" }.joined(separator: "\n")
         }
         if !recent.isEmpty {
-            text += "\n\nThe conversation so far (for follow-ups like \"and last month?\" or \"text her that\"):\n"
+            text += "\n\nThis question follows on from what was just said. Use it only to understand words like \"her\", \"that\" or \"last month\"; answer only the new question, and call tools again for anything it asks:\n"
             text += recent.map { "They asked: \($0.0)\nYou said: \($0.1)" }.joined(separator: "\n")
         }
         return text
