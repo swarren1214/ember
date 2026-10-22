@@ -243,7 +243,7 @@ final class EmberBrain {
                 var results: [EmberCloudBlock] = []
                 for use in toolUses {
                     assistantBlocks.append(.toolUse(id: use.id, name: use.name, input: use.input))
-                    let output = toolbox.run(use.name, input: Self.restored(use.input, with: redactor))
+                    let output = await toolbox.run(use.name, input: Self.restored(use.input, with: redactor))
                     results.append(.toolResult(id: use.id, content: redactor.redact(output)))
                 }
                 messages.append(EmberCloudMessage(role: "assistant", content: assistantBlocks))
@@ -336,6 +336,7 @@ enum EmberPrompt {
         Rules:
         - Always use a tool to read what the apps know. Never guess what's planned, spent or scheduled.
         - Ember can't change other apps' data. To change something, use open_app and say a button is ready.
+        - To call a person or a business, use place_call. The call screen opens for them; never say Ember can't make calls.
         - Only say something happened when a tool says it did.
         - Never name someone's allergy; say a meal does or doesn't fit everyone.
         - If a tool says an app hasn't shared something, say so simply.

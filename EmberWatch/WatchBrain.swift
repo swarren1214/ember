@@ -26,6 +26,7 @@ final class WatchBrain {
         var messages = Array(history.suffix(8))
         messages.append(EmberCloudMessage(role: "user", content: [.text(redactor.redact(question))]))
         var answer = ""
+        var actions: [EmberWatchAction] = []
 
         do {
             for _ in 0..<3 {
@@ -37,7 +38,7 @@ final class WatchBrain {
                     now: Date.now.formatted(date: .complete, time: .shortened),
                     roster: redactor.roster,
                     messages: messages,
-                    tools: ["household_facts"],
+                    tools: ["household_facts", "place_call"],
                     allowWebSearch: false
                 )
                 let outgoing = messages.flatMap(\.content).compactMap { $0.text ?? $0.content }.joined(separator: "\n")
@@ -45,11 +46,11 @@ final class WatchBrain {
 
                 let token = try await WatchAccount.shared.accessToken()
                 var text = ""
-                var toolUses: [(String, String)] = []
+                var toolUses: [(String, String, [String: EmberJSON])] = []
                 for try await event in EmberCloudClient(baseURL: EmberEndpoints.apiBaseURL).turn(request, accessToken: token) {
                     switch event {
                     case .text(let delta): text += delta
-                    case .toolUse(let useID, let name, _): toolUses.append((useID, name))
+                    case .toolUse(let useID, let name, let input): toolUses.append((useID, name, input))
                     case .done: break
                     }
                 }
@@ -57,11 +58,19 @@ final class WatchBrain {
                 guard !toolUses.isEmpty else { break }
                 var blocks: [EmberCloudBlock] = text.isEmpty ? [] : [.text(text)]
                 var results: [EmberCloudBlock] = []
-                for (useID, name) in toolUses {
-                    blocks.append(.toolUse(id: useID, name: name, input: [:]))
-                    let output = name == "household_facts"
-                        ? (context.facts.isEmpty ? "No facts shared yet." : "As of \(context.updatedAt.formatted(date: .abbreviated, time: .shortened)):\n" + context.facts.joined(separator: "\n"))
-                        : "That tool isn't available on the Watch."
+                for (useID, name, input) in toolUses {
+                    blocks.append(.toolUse(id: useID, name: name, input: input))
+                    let output: String
+                    switch name {
+                    case "household_facts":
+                        output = context.facts.isEmpty ? "No facts shared yet." : "As of \(context.updatedAt.formatted(date: .abbreviated, time: .shortened)):\n" + context.facts.joined(separator: "\n")
+                    case "place_call":
+                        let who = redactor.restore(input["who"]?.string ?? "")
+                        let near = redactor.restore(input["near"]?.string ?? "")
+                        output = await call(who: who, near: near, actions: &actions)
+                    default:
+                        output = "That tool isn't available on the Watch."
+                    }
                     results.append(.toolResult(id: useID, content: redactor.redact(output)))
                 }
                 messages.append(EmberCloudMessage(role: "assistant", content: blocks))
@@ -70,12 +79,25 @@ final class WatchBrain {
             let restored = redactor.restore(answer).trimmingCharacters(in: .whitespacesAndNewlines)
             history.append(EmberCloudMessage(role: "user", content: [.text(redactor.redact(question))]))
             history.append(EmberCloudMessage(role: "assistant", content: [.text(answer)]))
-            return EmberWatchReply(id: id, text: restored.isEmpty ? "Done." : restored, actions: [], tier: .claude)
+            return EmberWatchReply(id: id, text: restored.isEmpty ? "Done." : restored, actions: Array(actions.prefix(2)), tier: .claude)
         } catch WatchAccount.AccountError.signedOut {
             return EmberWatchReply(id: id, text: "Your Watch’s sign-in expired. Open Ember on your Watch and sign in again.", actions: [], tier: .none)
         } catch {
             let message = (error as? EmberCloudError)?.errorDescription ?? EmberCloudError.offline.errorDescription!
             return EmberWatchReply(id: id, text: message, actions: [], tier: .none)
+        }
+    }
+
+    /// Finds the number on the Watch; the reply gets a Call button that opens the Watch's phone.
+    private func call(who: String, near: String, actions: inout [EmberWatchAction]) async -> String {
+        switch await EmberCallFinder.find(who, near: near) {
+        case .success(let target):
+            if let url = target.url { actions.append(EmberWatchAction(title: "Call", url: url.absoluteString)) }
+            return "Found \(target.name). A Call button is on the Watch; they tap it to dial. Say it's ready in a few words. Don't say a number."
+        case .failure(.needsLocation):
+            return "Ember needs Location on the Watch to find \(who) nearby. Ask them to say the town."
+        case .failure(.nothingFound):
+            return "No phone number for \(who) in Contacts or Apple Maps."
         }
     }
 }

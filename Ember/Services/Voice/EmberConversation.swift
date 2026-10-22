@@ -4,6 +4,7 @@ import Foundation
 import Observation
 import OSLog
 import Speech
+import UIKit
 
 // One spoken exchange at a time, driven by the orb (the "Ember · Hearth AI" canvas):
 //
@@ -49,6 +50,8 @@ final class EmberConversation {
     @ObservationIgnored private var watcher: Task<Void, Never>?
     @ObservationIgnored private var answering: Task<Void, Never>?
     @ObservationIgnored private var exchange = 0
+    /// A handoff to open once the answer has been spoken (a call).
+    @ObservationIgnored private var openWhenSpoken: URL?
     @ObservationIgnored private var settled = ""
     @ObservationIgnored private var volatile = ""
     @ObservationIgnored private var consumedUntil = CMTime.zero
@@ -254,21 +257,28 @@ final class EmberConversation {
         phase = .thinking
         question = text
         liveAnswer = ""
+        openWhenSpoken = nil
         speaker.begin { [weak self] in
             guard let self, current == self.exchange else { return }
             // Done talking: the microphone turns off until the next tap.
             self.phase = .idle
             self.stopAudio()
+            // The microphone is off now, so the call screen gets the audio. iOS asks before dialing.
+            if let url = self.openWhenSpoken {
+                self.openWhenSpoken = nil
+                UIApplication.shared.open(url)
+            }
         }
         answering = Task { [weak self] in
             guard let self else { return }
-            await self.brain.ask(text, client: .iphone) { sentence in
+            let turn = await self.brain.ask(text, client: .iphone) { sentence in
                 guard current == self.exchange else { return }
                 if self.phase == .thinking { self.phase = .answering }
                 self.liveAnswer = Self.join(self.liveAnswer, sentence)
                 self.speaker.say(sentence)
             }
             guard current == self.exchange else { return }
+            self.openWhenSpoken = turn.cards.first { $0.opensWhenSpoken }?.link
             if self.phase == .thinking { self.phase = .answering }
             self.speaker.finish()
         }

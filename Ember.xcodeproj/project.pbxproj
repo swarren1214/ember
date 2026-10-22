@@ -395,6 +395,8 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Ember;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_NSContactsUsageDescription = "When you ask Ember to call someone, it finds their number in your contacts on your iPhone. Numbers aren't sent anywhere.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "When you ask Ember to call a nearby business, it uses your location to find the closest one. Your location isn't sent anywhere.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Ember listens while you talk to it, so it can answer and do what you ask.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Ember turns what you say into text on your iPhone, so it can understand your question.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -435,6 +437,8 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Ember;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_NSContactsUsageDescription = "When you ask Ember to call someone, it finds their number in your contacts on your iPhone. Numbers aren't sent anywhere.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "When you ask Ember to call a nearby business, it uses your location to find the closest one. Your location isn't sent anywhere.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Ember listens while you talk to it, so it can answer and do what you ask.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Ember turns what you say into text on your iPhone, so it can understand your question.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -474,6 +478,8 @@
 				INFOPLIST_FILE = "EmberWatch-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Ember;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Ember listens while you talk to it, so it can answer and do what you ask.";
+				INFOPLIST_KEY_NSContactsUsageDescription = "When you ask Ember to call someone, it finds their number in your contacts. Numbers aren't sent anywhere.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "When you ask Ember to call a nearby business, it uses your location to find the closest one. Your location isn't sent anywhere.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.stephenwarren.ember;
 				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = YES;
@@ -511,6 +517,8 @@
 				INFOPLIST_FILE = "EmberWatch-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Ember;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Ember listens while you talk to it, so it can answer and do what you ask.";
+				INFOPLIST_KEY_NSContactsUsageDescription = "When you ask Ember to call someone, it finds their number in your contacts. Numbers aren't sent anywhere.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "When you ask Ember to call a nearby business, it uses your location to find the closest one. Your location isn't sent anywhere.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.stephenwarren.ember;
 				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = YES;

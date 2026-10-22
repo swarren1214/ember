@@ -101,7 +101,7 @@ struct WatchRootView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 6) {
-                    EmberOrb(mood: .answering)
+                    EmberOrb(mood: .answering, speaking: true)
                         .frame(width: 24, height: 24)
                     if reply.tier.usedCloud {
                         Image(systemName: "cloud")

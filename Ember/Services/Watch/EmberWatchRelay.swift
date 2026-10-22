@@ -49,7 +49,7 @@ final class EmberWatchRelay: NSObject {
         let actions = turn.cards.compactMap { card -> EmberWatchAction? in
             guard case .handoff(let title, _, _) = card.kind, let url = card.link,
                   ["sms", "tel"].contains(url.scheme ?? "") else { return nil }
-            return EmberWatchAction(title: title == "Message" ? "Send Text" : title, url: url.absoluteString)
+            return EmberWatchAction(title: url.scheme == "tel" ? "Call" : (title == "Message" ? "Send Text" : title), url: url.absoluteString)
         }
         return EmberWatchReply(id: ask.id, text: turn.answer, actions: Array(actions.prefix(2)), tier: turn.tier)
     }

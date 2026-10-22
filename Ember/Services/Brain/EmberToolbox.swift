@@ -37,6 +37,8 @@ struct EmberCard: Identifiable {
     /// Opens the thing in its app.
     var link: URL?
     var actionTitle: String?
+    /// Opened for them once Ember has finished speaking (a call: the system still asks first).
+    var opensWhenSpoken = false
 }
 
 @MainActor
@@ -49,7 +51,7 @@ final class EmberToolbox {
 
     /// The tools on offer this turn. Kids get no money tools.
     var toolNames: [String] {
-        var names = ["household_people", "meals_planned", "meal_fits_household", "meal_times", "grocery_status", "study_today", "open_app", "message_draft"]
+        var names = ["household_people", "meals_planned", "meal_fits_household", "meal_times", "grocery_status", "study_today", "open_app", "message_draft", "place_call"]
         if !context.isKid { names += ["budget_status", "allowance_recent"] }
         return names.filter { name in
             guard let app = Self.app(for: name) else { return true }
@@ -85,7 +87,7 @@ final class EmberToolbox {
 
     // MARK: Running a tool by name (the cloud path)
 
-    func run(_ name: String, input: [String: EmberJSON]) -> String {
+    func run(_ name: String, input: [String: EmberJSON]) async -> String {
         guard toolNames.contains(name) else { return "That tool isn't available." }
         let arg = { (key: String) in input[key]?.string ?? "" }
         switch name {
@@ -99,6 +101,7 @@ final class EmberToolbox {
         case "study_today": return studyToday()
         case "open_app": return openApp(arg("place"))
         case "message_draft": return messageDraft(arg("text"))
+        case "place_call": return await placeCall(who: arg("who"), near: arg("near"))
         default: return "That tool isn't available."
         }
     }
@@ -281,6 +284,23 @@ final class EmberToolbox {
         cards.append(EmberCard(app: nil, kind: .handoff(title: "Message", detail: "“\(body)”", symbol: "message"),
                                link: url, actionTitle: "Open Messages"))
         return "A draft is ready in Messages for them to pick who to send it to. Say it's ready; it isn't sent."
+    }
+
+    /// A call to someone in their contacts or a place in Apple Maps. The phone's own call screen
+    /// opens once Ember finishes speaking and asks before dialing; the number never goes to a model.
+    func placeCall(who: String, near: String) async -> String {
+        switch await EmberCallFinder.find(who, near: near) {
+        case .success(let target):
+            cards.append(EmberCard(app: nil, kind: .handoff(title: target.name, detail: target.detail, symbol: "phone.fill"),
+                                   link: target.url, actionTitle: "Call", opensWhenSpoken: true))
+            let place = target.place.map { " (\($0))" } ?? ""
+            return "Found \(target.name)\(place). The call screen opens as soon as you finish speaking, and they tap Call to dial. Say you're calling them, in a few words. Don't say a number."
+        case .failure(.needsLocation):
+            return "Ember needs Location to find \(who) nearby. Ask them to say the town, or allow Location for Ember in Settings."
+        case .failure(.nothingFound):
+            let place = near.isEmpty ? "" : " in \(near)"
+            return "No phone number for \(who)\(place) in Contacts or Apple Maps."
+        }
     }
 }
 

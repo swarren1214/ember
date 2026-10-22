@@ -303,7 +303,7 @@ nonisolated struct HearthAppInfo: Sendable {
         // Not on TestFlight yet: the page doesn't list Ember (see `order`).
         availability: .testFlight(URL(string: "https://hearthapps.com")!),
         symbol: "flame",
-        colorHex: 0x2B1D17, inkHex: 0xC2410C, liteHex: 0xFF9A5C
+        colorHex: 0xEE5A1C, inkHex: 0xC2410C, liteHex: 0xFF9A5C
     )
 }
 

@@ -99,7 +99,7 @@ struct EmberHomeView: View {
             if mode == .answer, conversation.phase == .idle { dismissedTurn = brain.latest?.id }
             conversation.tapOrb()
         } label: {
-            EmberOrb(mood: orbMood, level: conversation.level)
+            EmberOrb(mood: orbMood, level: conversation.level, speaking: EmberSpeaker.shared.isSpeaking)
                 .frame(width: frame.diameter, height: frame.diameter)
                 .contentShape(.circle)
         }

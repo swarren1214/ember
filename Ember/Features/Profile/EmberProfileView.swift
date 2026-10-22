@@ -78,17 +78,10 @@ struct EmberKnowsSections: View {
                 Button {
                     settings.cloudHelp = choice
                 } label: {
-                    HStack(alignment: .top) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(choice.title).foregroundStyle(.primary)
-                            Text(choice.detail).font(.footnote).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if settings.cloudHelp == choice {
-                            Image(systemName: "checkmark").foregroundStyle(.primary).font(.body.weight(.semibold))
-                        }
-                    }
+                    EmberChoiceRow(title: choice.title, detail: choice.detail, isSelected: settings.cloudHelp == choice)
                 }
+                // Standard text colors; only the checkmark is orange.
+                .tint(.primary)
                 .accessibilityAddTraits(settings.cloudHelp == choice ? .isSelected : [])
             }
         } header: {
@@ -201,20 +194,12 @@ struct EmberCloudChoiceView: View {
                 Section {
                     ForEach(EmberSettings.CloudHelp.allCases) { option in
                         Button {
-                            choice = option
+                            withAnimation(.snappy) { choice = option }
                         } label: {
-                            HStack(alignment: .top) {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(option.title).font(.headline).foregroundStyle(.primary)
-                                    Text(option.detail).font(.subheadline).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                if choice == option {
-                                    Image(systemName: "checkmark").font(.body.weight(.semibold)).foregroundStyle(.primary)
-                                }
-                            }
-                            .padding(.vertical, 4)
+                            EmberChoiceRow(title: option.title, detail: option.detail, isSelected: choice == option, large: true)
                         }
+                        // Standard text colors; only the checkmark is orange.
+                        .tint(.primary)
                         .accessibilityAddTraits(choice == option ? .isSelected : [])
                     }
                 } footer: {
@@ -231,5 +216,38 @@ struct EmberCloudChoiceView: View {
                 }
             }
         }
+    }
+}
+
+/// A choice in a list: the checkmark in Ember's orange on the left of the selected option, the
+/// title and detail in the standard text colors. Unselected rows keep the checkmark's space, so
+/// the text never shifts.
+struct EmberChoiceRow: View {
+    let title: String
+    let detail: String
+    let isSelected: Bool
+    var large = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Image(systemName: "checkmark")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(EmberTheme.accent)
+                .opacity(isSelected ? 1 : 0)
+                .scaleEffect(isSelected ? 1 : 0.6)
+                .frame(width: 20)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: large ? 3 : 2) {
+                Text(title)
+                    .font(large ? .headline : .body)
+                    .foregroundStyle(Color.primary)
+                Text(detail)
+                    .font(large ? .subheadline : .footnote)
+                    .foregroundStyle(Color.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, large ? 4 : 0)
+        .contentShape(.rect)
     }
 }

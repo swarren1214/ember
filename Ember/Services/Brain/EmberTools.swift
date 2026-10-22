@@ -175,6 +175,26 @@ nonisolated struct MessageDraftTool: Tool {
     }
 }
 
+nonisolated struct PlaceCallTool: Tool {
+    let name = "place_call"
+    let description = "Calls a person from Contacts or a business from Apple Maps: finds the number and opens the phone's call screen, where they tap Call."
+    let toolbox: EmberToolbox
+
+    @Generable
+    nonisolated struct Arguments {
+        @Guide(description: "Who to call: a person's name or a business, as they said it")
+        var who: String
+        @Guide(description: "The town or area they named, or an empty string")
+        var near: String
+    }
+
+    func call(arguments: Arguments) async throws -> String {
+        let who = arguments.who
+        let near = arguments.near
+        return await toolbox.placeCall(who: who, near: near)
+    }
+}
+
 enum EmberTools {
     /// The on-device tools for this turn, matching `EmberToolbox.toolNames`.
     @MainActor
@@ -190,6 +210,7 @@ enum EmberTools {
             StudyTodayTool(toolbox: toolbox),
             OpenAppTool(toolbox: toolbox),
             MessageDraftTool(toolbox: toolbox),
+            PlaceCallTool(toolbox: toolbox),
         ]
         let allowed = Set(toolbox.toolNames)
         return all.filter { allowed.contains($0.name) }

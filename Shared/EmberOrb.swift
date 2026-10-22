@@ -1,16 +1,28 @@
 import SwiftUI
 
-// The orb: Ember's one moving part, the same on iPhone and Apple Watch (compiled into both; the
-// "Ember · Hearth AI" canvas). Three soft blobs of ember light turn and change shape at their own
-// speeds around a bright core, blended with `.screen` so they glow where they overlap.
+// The orb: Ember's one moving part, the same on iPhone and Apple Watch (compiled into both).
+// Design: the "Ember Orb Motion" prototype.
 //
-//   idle       slow breathing
-//   listening  bigger, softer, pulses with your voice, ripples out
-//   thinking   spins faster, a spark circles it
-//   answering  small and crisp, still glowing
+// How it's drawn
+// - The flame is three blobs of light and a bright core, each a radial gradient that fades to
+//   nothing well inside the area it fills, so no edge is ever drawn.
+// - That flame is drawn as a layer several times at different blurs, added together: a wide
+//   halo, the soft body, and a faint sharper pass. It reads as light seen through squinted
+//   eyes rather than shapes stacked on shapes.
 //
-// Drawn from a TimelineView clock, so every state change is a spring between two steady
-// motions, never a restart. Reduce Motion keeps the glow and drops the motion.
+// How it moves
+// - Every motion advances a phase by (time since the last frame × speed), and every value eases
+//   toward its target. A state change can only bend the motion, never jump it. (The first
+//   version multiplied the clock by a speed; the clock is about 800 million seconds, so
+//   changing the speed jumped the rotation by billions of radians: the "seizure".)
+// - Listening follows the microphone: louder makes the orb at most 8% bigger and the flame and
+//   halo brighter, never faster. Fast attack, slow release, so syllables read as pulses.
+// - Thinking: the flame draws in and dims a little, sparks spiral in from the edge and are
+//   swallowed by the core, and the core swells on a slow two-second breath.
+// - Answering: brightness follows Ember speaking.
+// - Reduce Motion keeps the glow and the voice response and drops the drifting.
+//
+// The orb draws past its frame (the halo needs the room); place it by its frame as usual.
 
 enum EmberOrbMood: Equatable {
     case idle, listening, thinking, answering
@@ -18,120 +30,259 @@ enum EmberOrbMood: Equatable {
 
 struct EmberOrb: View {
     var mood: EmberOrbMood
-    /// Microphone loudness, 0...1 (listening only).
+    /// Microphone loudness, 0...1 (listening).
     var level: Double = 0
+    /// Ember is speaking (answering): the glow follows a speech-like rhythm.
+    var speaking: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var engine = EmberOrbEngine()
+
+    /// How far past its frame the halo reaches, as a multiple of the frame.
+    private static let bleed: CGFloat = 2.2
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 60, paused: reduceMotion)) { timeline in
-            let t = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
-            GeometryReader { proxy in
-                let size = min(proxy.size.width, proxy.size.height)
-                ZStack {
-                    if mood == .listening && !reduceMotion {
-                        ripples(t: t, size: size)
-                    }
-                    if mood == .thinking && !reduceMotion {
-                        spark(t: t, size: size)
-                    }
-                    orb(t: t, size: size)
-                        .scaleEffect(scale(t: t))
+        GeometryReader { proxy in
+            let side = min(proxy.size.width, proxy.size.height)
+            TimelineView(.animation) { timeline in
+                let _ = engine.step(to: timeline.date, mood: mood, level: level, speaking: speaking, reduceMotion: reduceMotion)
+                Canvas { context, size in
+                    engine.draw(in: &context, size: size, orbRadius: side / 2)
                 }
-                .frame(width: proxy.size.width, height: proxy.size.height)
+                .frame(width: side * Self.bleed, height: side * Self.bleed)
             }
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
+        .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
+}
 
-    // MARK: Parts
+/// The orb's state from frame to frame: phases, eased values and sparks. A class, mutated as
+/// frames are drawn; it isn't observed, so it never causes a redraw of its own.
+final class EmberOrbEngine {
+    private struct Spark {
+        var angle: Double
+        var distance: Double
+        var life: Double
+    }
 
-    private func orb(t: Double, size: CGFloat) -> some View {
-        let speed = mood == .thinking ? 3.2 : 1.0
-        let blur = size * (mood == .listening ? 0.07 : mood == .answering ? 0.03 : 0.05)
-        return ZStack {
-            blob(t: t * speed, period: 9, morph: 7, size: size, inset: 0.06,
-                 colors: [Color(red: 1, green: 0.835, blue: 0.573), Color(red: 1, green: 0.478, blue: 0.184), Color(red: 1, green: 0.235, blue: 0.078).opacity(0)],
-                 center: UnitPoint(x: 0.34, y: 0.34), offset: 0)
-            blob(t: -t * speed, period: 13, morph: 9, size: size, inset: 0.08,
-                 colors: [Color(red: 1, green: 0.29, blue: 0.18), Color(red: 0.84, green: 0.157, blue: 0.275).opacity(0.55), Color(red: 0.78, green: 0.118, blue: 0.235).opacity(0)],
-                 center: UnitPoint(x: 0.6, y: 0.62), offset: 1.7)
-            blob(t: t * speed, period: 6, morph: 5, size: size, inset: 0.16,
-                 colors: [Color(red: 1, green: 0.953, blue: 0.863), Color(red: 1, green: 0.745, blue: 0.392).opacity(0.6), Color(red: 1, green: 0.706, blue: 0.353).opacity(0)],
-                 center: UnitPoint(x: 0.48, y: 0.3), offset: 3.1)
-            // The core.
-            Circle()
-                .fill(RadialGradient(colors: [Color(red: 1, green: 0.973, blue: 0.925).opacity(0.95), Color(red: 1, green: 0.808, blue: 0.588).opacity(0.35), .clear],
-                                     center: .center, startRadius: 0, endRadius: size * 0.2))
-                .frame(width: size * 0.4, height: size * 0.4)
-                .opacity(0.8 + 0.2 * sin(t * 1.9))
-                .blur(radius: size * 0.025)
+    private var lastDate: Date?
+    // Phases (radians), advanced by dt × speed.
+    private var spin = 0.0
+    private var morph = 0.0
+    private var breath = 0.0
+    private var corePhase = 0.0
+    private var speechClock = 0.0
+    // Eased values.
+    private var level = 0.0
+    private var speech = 0.0
+    private var glow = 0.5
+    private var brightness = 1.0
+    private var inward = 0.0
+    private var voiceScale = 1.0
+    private var sparks: [Spark] = []
+    private var mood: EmberOrbMood = .idle
+
+    #if os(watchOS)
+    /// The Watch draws two passes and fewer sparks.
+    private static let passes: [(blur: Double, opacity: Double)] = [(0.5, 0.6), (0.14, 1.0)]
+    private static let sparkRate = 10.0
+    #else
+    private static let passes: [(blur: Double, opacity: Double)] = [(0.55, 0.55), (0.16, 0.9), (0.05, 0.35)]
+    private static let sparkRate = 22.0
+    #endif
+
+    func step(to date: Date, mood: EmberOrbMood, level input: Double, speaking: Bool, reduceMotion: Bool) {
+        let dt = min(max(date.timeIntervalSince(lastDate ?? date), 0), 0.05)
+        lastDate = date
+        self.mood = mood
+
+        // The voice: fast attack, slow release.
+        let heard = mood == .listening ? min(max(input, 0), 1) : 0
+        level = Self.follow(level, heard, dt)
+        speechClock += dt
+        let said = mood == .answering && speaking ? Self.speechEnvelope(speechClock) * 0.8 : 0
+        speech = Self.follow(speech, said, dt)
+
+        // Targets for this mood.
+        let targetGlow, targetBrightness, targetInward: Double
+        switch mood {
+        case .idle:
+            (targetGlow, targetBrightness, targetInward) = (0.5, 1, 0)
+        case .listening:
+            (targetGlow, targetBrightness, targetInward) = (0.7 + level * 0.5, 1 + level * 0.55, 0)
+        case .thinking:
+            (targetGlow, targetBrightness, targetInward) = (0.55, 0.92, 1)
+        case .answering:
+            (targetGlow, targetBrightness, targetInward) = (0.4 + speech * 0.4, 1 + speech * 0.4, 0)
         }
-        .compositingGroup()
-        .blur(radius: blur)
-        .frame(width: size, height: size)
-        .animation(.smooth(duration: 0.8), value: mood)
+        let voice = mood == .listening ? level : mood == .answering ? speech * 0.6 : 0
+        glow = Self.ease(glow, targetGlow, dt, rate: mood == .listening ? 18 : 4)
+        brightness = Self.ease(brightness, targetBrightness, dt, rate: 18)
+        inward = Self.ease(inward, targetInward, dt, rate: 3)
+        voiceScale = Self.ease(voiceScale, 1 + 0.08 * voice, dt, rate: 22)
+
+        // The same calm pace in every mood; only the breath slows down or speeds up.
+        let drift = reduceMotion ? 0.0 : 1.0
+        spin += dt * drift
+        morph += dt * drift
+        breath += dt * (mood == .thinking ? 2 * .pi / 2.1 : 2 * .pi / 5)
+        corePhase += dt * 1.9
+
+        // Sparks spiral in while thinking.
+        if !reduceMotion, mood == .thinking, Double.random(in: 0...1) < dt * Self.sparkRate {
+            sparks.append(Spark(angle: .random(in: 0...(2 * .pi)), distance: .random(in: 1.9...2.5), life: 0))
+        }
+        for index in sparks.indices.reversed() {
+            sparks[index].life += dt
+            sparks[index].distance -= dt * (0.55 + sparks[index].life * 0.9)
+            sparks[index].angle += dt * (1.6 / max(sparks[index].distance, 0.3))
+            if sparks[index].distance < 0.18 { sparks.remove(at: index) }
+        }
+        if reduceMotion { sparks.removeAll() }
     }
 
-    private func blob(t: Double, period: Double, morph: Double, size: CGFloat, inset: CGFloat, colors: [Color], center: UnitPoint, offset: Double) -> some View {
-        let angle = Angle.radians((t / period) * 2 * .pi + offset)
-        let phase = (t / morph) * 2 * .pi + offset
-        let width = 1 + 0.07 * sin(phase)
-        let height = 1 + 0.07 * cos(phase * 1.3)
-        let diameter = size * (1 - inset * 2)
-        return Ellipse()
-            .fill(RadialGradient(colors: colors, center: center, startRadius: 0, endRadius: diameter * 0.62))
-            .frame(width: diameter * width, height: diameter * height)
-            .rotationEffect(angle)
-            .blendMode(.screen)
-    }
+    func draw(in context: inout GraphicsContext, size: CGSize, orbRadius: CGFloat) {
+        let center = CGPoint(x: size.width / 2, y: size.height / 2)
+        let breathing = (mood == .listening ? 0.012 : 0.035) * sin(breath)
+        let r = orbRadius * voiceScale * (1 + breathing)
 
-    private func ripples(t: Double, size: CGFloat) -> some View {
-        ZStack {
-            ForEach(0..<3, id: \.self) { index in
-                let progress = ((t / 2.6) + Double(index) / 3).truncatingRemainder(dividingBy: 1)
-                Circle()
-                    .stroke(Color(red: 1, green: 0.588, blue: 0.314).opacity(0.55 * (1 - progress)), lineWidth: 1.5)
-                    .frame(width: size, height: size)
-                    .scaleEffect(0.92 + progress * 0.83)
+        // A faint ambient wash around the orb.
+        context.fill(
+            Path(CGRect(origin: .zero, size: size)),
+            with: .radialGradient(
+                Gradient(stops: [
+                    .init(color: Self.rgb(1, 0.44, 0.16, 0.22 * glow), location: 0),
+                    .init(color: Self.rgb(1, 0.31, 0.12, 0.08 * glow), location: 0.4),
+                    .init(color: Self.rgb(1, 0.31, 0.12, 0), location: 1),
+                ]),
+                center: center, startRadius: 0, endRadius: r * 2.6
+            )
+        )
+
+        // Sparks, softly blurred, behind the flame.
+        if !sparks.isEmpty {
+            var sparkContext = context
+            sparkContext.blendMode = .plusLighter
+            sparkContext.addFilter(.blur(radius: max(1, r * 0.03)))
+            for spark in sparks {
+                let point = CGPoint(x: center.x + cos(spark.angle) * r * spark.distance,
+                                    y: center.y + sin(spark.angle) * r * spark.distance)
+                let fade = min(1, spark.life * 3) * min(1, (spark.distance - 0.18) * 2.5) * inward
+                let size = max(5, r * 0.06)
+                sparkContext.fill(
+                    Path(ellipseIn: CGRect(x: point.x - size, y: point.y - size, width: size * 2, height: size * 2)),
+                    with: .radialGradient(
+                        Gradient(stops: [
+                            .init(color: Self.rgb(1, 0.925, 0.82, 0.95 * fade), location: 0),
+                            .init(color: Self.rgb(1, 0.59, 0.27, 0.5 * fade), location: 0.4),
+                            .init(color: Self.rgb(1, 0.47, 0.2, 0), location: 1),
+                        ]),
+                        center: point, startRadius: 0, endRadius: size
+                    )
+                )
+            }
+        }
+
+        // The flame, laid down once per pass at its own blur, all added together.
+        for pass in Self.passes {
+            var passContext = context
+            passContext.blendMode = .plusLighter
+            passContext.opacity = pass.opacity * (pass.blur > 0.4 ? min(1.4, brightness) : 1)
+            passContext.addFilter(.blur(radius: max(1, r * pass.blur)))
+            passContext.drawLayer { layer in
+                layer.blendMode = .plusLighter
+                self.drawFlame(in: &layer, center: center, radius: r)
             }
         }
     }
 
-    private func spark(t: Double, size: CGFloat) -> some View {
-        let angle = (t / 1.5) * 2 * .pi
-        let radius = size * 0.5 + 16
-        return ZStack {
-            Circle()
-                .stroke(Color(red: 1, green: 0.667, blue: 0.431).opacity(0.16), lineWidth: 1)
-                .frame(width: radius * 2, height: radius * 2)
-            Circle()
-                .fill(Color(red: 1, green: 0.882, blue: 0.745))
-                .frame(width: 8, height: 8)
-                .shadow(color: Color(red: 1, green: 0.55, blue: 0.24).opacity(0.8), radius: 7)
-                .offset(x: cos(angle) * radius, y: sin(angle) * radius)
-        }
+    private func drawFlame(in context: inout GraphicsContext, center: CGPoint, radius r: CGFloat) {
+        let b = brightness
+        func a(_ value: Double) -> Double { min(1, value * b) }
+
+        blob(&context, center, r * 1.05, angle: spin * 2 * .pi / 9, wobble: morph * 2 * .pi / 7, focus: (0.34, 0.34), stops: [
+            (Self.rgb(1, 0.835, 0.573, a(0.85)), 0),
+            (Self.rgb(1, 0.478, 0.184, a(0.7)), 0.35),
+            (Self.rgb(1, 0.275, 0.098, a(0.18)), 0.7),
+            (Self.rgb(1, 0.235, 0.078, 0), 1),
+        ])
+        blob(&context, center, r * 1.0, angle: -spin * 2 * .pi / 13 + 1.7, wobble: morph * 2 * .pi / 9 + 1.7, focus: (0.62, 0.64), stops: [
+            (Self.rgb(1, 0.29, 0.18, a(0.7)), 0),
+            (Self.rgb(0.84, 0.157, 0.275, a(0.32)), 0.4),
+            (Self.rgb(0.745, 0.118, 0.235, a(0.08)), 0.75),
+            (Self.rgb(0.78, 0.118, 0.235, 0), 1),
+        ])
+        blob(&context, center, r * 0.8, angle: spin * 2 * .pi / 6 + 3.1, wobble: morph * 2 * .pi / 5 + 3.1, focus: (0.48, 0.3), stops: [
+            (Self.rgb(1, 0.953, 0.863, a(0.75)), 0),
+            (Self.rgb(1, 0.745, 0.392, a(0.38)), 0.3),
+            (Self.rgb(1, 0.706, 0.353, 0), 1),
+        ])
+
+        // The core: brighter with the voice; while thinking it swells as the sparks arrive.
+        let coreBoost = mood == .thinking ? 0.25 + 0.25 * sin(breath) : 0
+        let coreAlpha = min(1, (0.7 + 0.15 * sin(corePhase)) * b + coreBoost)
+        let coreRadius = r * 0.55 * (1 + coreBoost * 0.3)
+        context.fill(
+            Path(CGRect(x: center.x - coreRadius, y: center.y - coreRadius, width: coreRadius * 2, height: coreRadius * 2)),
+            with: .radialGradient(
+                Gradient(stops: [
+                    .init(color: Self.rgb(1, 0.98, 0.94, coreAlpha), location: 0),
+                    .init(color: Self.rgb(1, 0.84, 0.63, coreAlpha * 0.45), location: 0.35),
+                    .init(color: Self.rgb(1, 0.78, 0.55, 0), location: 1),
+                ]),
+                center: center, startRadius: 0, endRadius: coreRadius
+            )
+        )
     }
 
-    private func scale(t: Double) -> CGFloat {
-        guard !reduceMotion else { return 1 }
-        switch mood {
-        case .idle, .answering:
-            return 1 + 0.045 * (0.5 + 0.5 * sin(t * 2 * .pi / 5))
-        case .thinking:
-            return 1 + 0.04 * (0.5 + 0.5 * sin(t * 2 * .pi / 1.3))
-        case .listening:
-            // The voice drives it; a gentle pulse underneath so silence still feels alive.
-            return 1 + 0.03 * sin(t * 2 * .pi / 1.1) + 0.12 * level
-        }
+    /// One blob of light: turned, gently squashed, its gradient off-center inside it.
+    private func blob(_ context: inout GraphicsContext, _ center: CGPoint, _ r: CGFloat, angle: Double, wobble: Double,
+                      focus: (Double, Double), stops: [(Color, Double)]) {
+        var blob = context
+        blob.translateBy(x: center.x, y: center.y)
+        blob.rotate(by: .radians(angle))
+        blob.scaleBy(x: 1 + 0.07 * sin(wobble), y: 1 + 0.07 * cos(wobble * 1.3))
+        let focusPoint = CGPoint(x: (focus.0 - 0.5) * r, y: (focus.1 - 0.5) * r)
+        blob.fill(
+            Path(CGRect(x: -r * 1.6, y: -r * 1.6, width: r * 3.2, height: r * 3.2)),
+            with: .radialGradient(
+                Gradient(stops: stops.map { Gradient.Stop(color: $0.0, location: $0.1) }),
+                center: focusPoint, startRadius: 0, endRadius: r
+            )
+        )
+    }
+
+    // MARK: Helpers
+
+    private static func rgb(_ red: Double, _ green: Double, _ blue: Double, _ alpha: Double) -> Color {
+        Color(.sRGB, red: red, green: green, blue: blue, opacity: max(0, min(1, alpha)))
+    }
+
+    private static func ease(_ current: Double, _ goal: Double, _ dt: Double, rate: Double) -> Double {
+        current + (goal - current) * (1 - exp(-dt * rate))
+    }
+
+    /// Fast attack, slow release.
+    private static func follow(_ current: Double, _ input: Double, _ dt: Double) -> Double {
+        ease(current, input, dt, rate: input > current ? 28 : 5)
+    }
+
+    /// A speech-like envelope: syllables inside words, pauses between phrases.
+    private static func speechEnvelope(_ t: Double) -> Double {
+        let phrase = (sin(t * 0.9) + sin(t * 0.37 + 1)) > -0.2 ? 1.0 : 0.0
+        let syllable = max(0, sin(t * 2 * .pi * 4.6) * 0.6 + sin(t * 2 * .pi * 2.1 + 2) * 0.4)
+        let jitter = 0.75 + 0.25 * sin(t * 13.7) * sin(t * 7.1)
+        return phrase * syllable * jitter
     }
 }
 
 #Preview {
-    VStack(spacing: 40) {
+    VStack(spacing: 80) {
         EmberOrb(mood: .idle).frame(width: 124, height: 124)
         EmberOrb(mood: .listening, level: 0.4).frame(width: 200, height: 200)
-        EmberOrb(mood: .thinking).frame(width: 140, height: 140)
+        EmberOrb(mood: .thinking).frame(width: 150, height: 150)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color(red: 0.055, green: 0.043, blue: 0.039))
