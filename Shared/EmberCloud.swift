@@ -100,8 +100,12 @@ nonisolated struct EmberCloudRequest: Codable, Sendable {
     /// The household as tokens, roles and age bands.
     var roster: [EmberRosterEntry]
     var messages: [EmberCloudMessage]
-    /// The tools the device will run this turn, by name. The server holds their schemas.
+    /// The tools the device will run this turn, by name. Each must be on the server's allowlist.
     var tools: [String]
+    /// Their definitions ({ name, description, input_schema }), so the device and Claude agree on
+    /// one description of each tool. The server checks every name against its allowlist and
+    /// falls back to its own definition for a name it knows but wasn't sent.
+    var toolDefs: [EmberJSON]? = nil
     /// Claude's web search, only for general-knowledge questions the device marked as such.
     var allowWebSearch: Bool
 }

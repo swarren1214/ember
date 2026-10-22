@@ -1,0 +1,752 @@
+[
+ {
+  "question": "How much did we spend this week?",
+  "domain": "money",
+  "tool": "spending"
+ },
+ {
+  "question": "How much did I spend last week?",
+  "domain": "money",
+  "tool": "spending"
+ },
+ {
+  "question": "What did we spend on groceries this month?",
+  "domain": "money",
+  "tool": "spending"
+ },
+ {
+  "question": "How much have we spent at Costco since the 1st?",
+  "domain": "money",
+  "tool": "spending"
+ },
+ {
+  "question": "How much did we spend eating out in September?",
+  "domain": "money",
+  "tool": "spending"
+ },
+ {
+  "question": "What's our spending been the last 30 days?",
+  "domain": "money",
+  "tool": "spending"
+ },
+ {
+  "question": "How much did Ana spend this month?",
+  "domain": "money",
+  "tool": "spending"
+ },
+ {
+  "question": "Did we spend more this week than last week?",
+  "domain": "money",
+  "tool": "spending"
+ },
+ {
+  "question": "How much money went to gas in October?",
+  "domain": "money",
+  "tool": "spending"
+ },
+ {
+  "question": "What did we spend yesterday?",
+  "domain": "money",
+  "tool": "spending"
+ },
+ {
+  "question": "How much have we spent at Target this year?",
+  "domain": "money",
+  "tool": "spending"
+ },
+ {
+  "question": "What's the total spent since October 5?",
+  "domain": "money",
+  "tool": "spending"
+ },
+ {
+  "question": "How's the grocery budget?",
+  "domain": "money",
+  "tool": "budgets"
+ },
+ {
+  "question": "How much is left in the eating out budget?",
+  "domain": "money",
+  "tool": "budgets"
+ },
+ {
+  "question": "Are we over budget anywhere?",
+  "domain": "money",
+  "tool": "budgets"
+ },
+ {
+  "question": "How are our budgets doing this month?",
+  "domain": "money",
+  "tool": "budgets"
+ },
+ {
+  "question": "How much can I still spend on groceries this month?",
+  "domain": "money",
+  "tool": "budgets"
+ },
+ {
+  "question": "What's left in the fun money budget?",
+  "domain": "money",
+  "tool": "budgets"
+ },
+ {
+  "question": "How did we do on the budget in September?",
+  "domain": "money",
+  "tool": "budgets"
+ },
+ {
+  "question": "How much is left for gas?",
+  "domain": "money",
+  "tool": "budgets"
+ },
+ {
+  "question": "What bills are due this week?",
+  "domain": "money",
+  "tool": "bills"
+ },
+ {
+  "question": "Is the rent paid?",
+  "domain": "money",
+  "tool": "bills"
+ },
+ {
+  "question": "Any bills late?",
+  "domain": "money",
+  "tool": "bills"
+ },
+ {
+  "question": "When is the power bill due?",
+  "domain": "money",
+  "tool": "bills"
+ },
+ {
+  "question": "What bills are coming up in the next 30 days?",
+  "domain": "money",
+  "tool": "bills"
+ },
+ {
+  "question": "How much do we owe in bills this month?",
+  "domain": "money",
+  "tool": "bills"
+ },
+ {
+  "question": "What did we buy at Costco last week?",
+  "domain": "money",
+  "tool": "purchases"
+ },
+ {
+  "question": "What were my last few purchases?",
+  "domain": "money",
+  "tool": "purchases"
+ },
+ {
+  "question": "Show me what we spent on eating out this week",
+  "domain": "money",
+  "tool": "purchases"
+ },
+ {
+  "question": "What was that charge at Amazon yesterday?",
+  "domain": "money",
+  "tool": "purchases"
+ },
+ {
+  "question": "Log $12.50 at Target",
+  "domain": "money",
+  "tool": "log_spending"
+ },
+ {
+  "question": "I spent 40 dollars at Costco on groceries",
+  "domain": "money",
+  "tool": "log_spending"
+ },
+ {
+  "question": "Add a $25 purchase at Chick-fil-A to eating out",
+  "domain": "money",
+  "tool": "log_spending"
+ },
+ {
+  "question": "Log 60 bucks for gas at Maverik yesterday",
+  "domain": "money",
+  "tool": "log_spending"
+ },
+ {
+  "question": "I paid $8 at the car wash",
+  "domain": "money",
+  "tool": "log_spending"
+ },
+ {
+  "question": "Mark rent paid",
+  "domain": "money",
+  "tool": "mark_bill_paid"
+ },
+ {
+  "question": "I paid the Netflix bill",
+  "domain": "money",
+  "tool": "mark_bill_paid"
+ },
+ {
+  "question": "Mark the power bill as paid",
+  "domain": "money",
+  "tool": "mark_bill_paid"
+ },
+ {
+  "question": "What's for dinner tonight?",
+  "domain": "meals",
+  "tool": "meals_planned"
+ },
+ {
+  "question": "What's for dinner tomorrow?",
+  "domain": "meals",
+  "tool": "meals_planned"
+ },
+ {
+  "question": "What are we eating this week?",
+  "domain": "meals",
+  "tool": "meals_planned"
+ },
+ {
+  "question": "What's planned for lunch on Saturday?",
+  "domain": "meals",
+  "tool": "meals_planned"
+ },
+ {
+  "question": "Is anyone skipping dinner tonight?",
+  "domain": "meals",
+  "tool": "meals_planned"
+ },
+ {
+  "question": "What's for breakfast tomorrow?",
+  "domain": "meals",
+  "tool": "meals_planned"
+ },
+ {
+  "question": "What meals are planned next week?",
+  "domain": "meals",
+  "tool": "meals_planned"
+ },
+ {
+  "question": "Does tonight's dinner work with everyone's allergies?",
+  "domain": "meals",
+  "tool": "meal_fits_household"
+ },
+ {
+  "question": "Is Saturday's dinner safe for everyone?",
+  "domain": "meals",
+  "tool": "meal_fits_household"
+ },
+ {
+  "question": "Can everyone eat tomorrow's lunch?",
+  "domain": "meals",
+  "tool": "meal_fits_household"
+ },
+ {
+  "question": "What time is dinner?",
+  "domain": "meals",
+  "tool": "meal_times"
+ },
+ {
+  "question": "When do we usually eat lunch?",
+  "domain": "meals",
+  "tool": "meal_times"
+ },
+ {
+  "question": "What's on the grocery list?",
+  "domain": "meals",
+  "tool": "grocery_list"
+ },
+ {
+  "question": "Is milk on the list?",
+  "domain": "meals",
+  "tool": "grocery_list"
+ },
+ {
+  "question": "How many things are left on the grocery list?",
+  "domain": "meals",
+  "tool": "grocery_list"
+ },
+ {
+  "question": "Do we need eggs?",
+  "domain": "meals",
+  "tool": "grocery_list"
+ },
+ {
+  "question": "What do I still need to buy?",
+  "domain": "meals",
+  "tool": "grocery_list"
+ },
+ {
+  "question": "Add milk to the grocery list",
+  "domain": "meals",
+  "tool": "add_groceries"
+ },
+ {
+  "question": "Put eggs, bananas and bread on the list",
+  "domain": "meals",
+  "tool": "add_groceries"
+ },
+ {
+  "question": "Add 2 dozen eggs to groceries",
+  "domain": "meals",
+  "tool": "add_groceries"
+ },
+ {
+  "question": "We need paper towels, add them to the list",
+  "domain": "meals",
+  "tool": "add_groceries"
+ },
+ {
+  "question": "Add a gallon of milk and some limes to the shopping list",
+  "domain": "meals",
+  "tool": "add_groceries"
+ },
+ {
+  "question": "Add chicken breasts to the grocery list",
+  "domain": "meals",
+  "tool": "add_groceries"
+ },
+ {
+  "question": "I got the milk, check it off",
+  "domain": "meals",
+  "tool": "check_off_groceries"
+ },
+ {
+  "question": "Check off eggs and bread",
+  "domain": "meals",
+  "tool": "check_off_groceries"
+ },
+ {
+  "question": "We got the limes",
+  "domain": "meals",
+  "tool": "check_off_groceries"
+ },
+ {
+  "question": "Mark bananas as bought on the grocery list",
+  "domain": "meals",
+  "tool": "check_off_groceries"
+ },
+ {
+  "question": "Did the kids finish their chores?",
+  "domain": "family",
+  "tool": "chores"
+ },
+ {
+  "question": "What chores does Max have today?",
+  "domain": "family",
+  "tool": "chores"
+ },
+ {
+  "question": "Is Ella done with her chores?",
+  "domain": "family",
+  "tool": "chores"
+ },
+ {
+  "question": "What chores are left today?",
+  "domain": "family",
+  "tool": "chores"
+ },
+ {
+  "question": "Who has dishes today?",
+  "domain": "family",
+  "tool": "chores"
+ },
+ {
+  "question": "What were the chores yesterday?",
+  "domain": "family",
+  "tool": "chores"
+ },
+ {
+  "question": "What chores need my OK?",
+  "domain": "family",
+  "tool": "chores_waiting"
+ },
+ {
+  "question": "Is anything waiting for approval?",
+  "domain": "family",
+  "tool": "chores_waiting"
+ },
+ {
+  "question": "Any chores to approve?",
+  "domain": "family",
+  "tool": "chores_waiting"
+ },
+ {
+  "question": "Approve the kids' chores",
+  "domain": "family",
+  "tool": "approve_chores"
+ },
+ {
+  "question": "Approve Max's chores",
+  "domain": "family",
+  "tool": "approve_chores"
+ },
+ {
+  "question": "Approve all the chores",
+  "domain": "family",
+  "tool": "approve_chores"
+ },
+ {
+  "question": "Max took out the trash",
+  "domain": "family",
+  "tool": "mark_chore_done"
+ },
+ {
+  "question": "Mark Ella's dishes done",
+  "domain": "family",
+  "tool": "mark_chore_done"
+ },
+ {
+  "question": "The trash chore is done for Max",
+  "domain": "family",
+  "tool": "mark_chore_done"
+ },
+ {
+  "question": "What's on the calendar today?",
+  "domain": "family",
+  "tool": "family_calendar"
+ },
+ {
+  "question": "What's on the family calendar this weekend?",
+  "domain": "family",
+  "tool": "family_calendar"
+ },
+ {
+  "question": "Does Ella have practice tomorrow?",
+  "domain": "family",
+  "tool": "family_calendar"
+ },
+ {
+  "question": "What's the family schedule next week?",
+  "domain": "family",
+  "tool": "family_calendar"
+ },
+ {
+  "question": "Who's driving to soccer on Tuesday?",
+  "domain": "family",
+  "tool": "family_calendar"
+ },
+ {
+  "question": "When is Max's next game?",
+  "domain": "family",
+  "tool": "family_calendar"
+ },
+ {
+  "question": "What events do we have Saturday?",
+  "domain": "family",
+  "tool": "family_calendar"
+ },
+ {
+  "question": "Add soccer practice Saturday at 9am to the family calendar",
+  "domain": "family",
+  "tool": "add_family_event"
+ },
+ {
+  "question": "Put Ella's recital on the family calendar for November 3 at 6pm",
+  "domain": "family",
+  "tool": "add_family_event"
+ },
+ {
+  "question": "Add a dentist appointment for Max on the family calendar tomorrow at 3",
+  "domain": "family",
+  "tool": "add_family_event"
+ },
+ {
+  "question": "Schedule a family movie night Friday at 7",
+  "domain": "family",
+  "tool": "add_family_event"
+ },
+ {
+  "question": "How much allowance did the kids get this month?",
+  "domain": "family",
+  "tool": "allowance_recent"
+ },
+ {
+  "question": "What allowance did we pay out recently?",
+  "domain": "family",
+  "tool": "allowance_recent"
+ },
+ {
+  "question": "How many calories do I have left?",
+  "domain": "food",
+  "tool": "food_log"
+ },
+ {
+  "question": "How much protein have I had today?",
+  "domain": "food",
+  "tool": "food_log"
+ },
+ {
+  "question": "What did I eat yesterday?",
+  "domain": "food",
+  "tool": "food_log"
+ },
+ {
+  "question": "How many calories did I average this week?",
+  "domain": "food",
+  "tool": "food_log"
+ },
+ {
+  "question": "Am I over my calories today?",
+  "domain": "food",
+  "tool": "food_log"
+ },
+ {
+  "question": "What have I logged for lunch?",
+  "domain": "food",
+  "tool": "food_log"
+ },
+ {
+  "question": "Log a turkey sandwich for lunch",
+  "domain": "food",
+  "tool": "log_food"
+ },
+ {
+  "question": "I ate a banana, log it",
+  "domain": "food",
+  "tool": "log_food"
+ },
+ {
+  "question": "Log food",
+  "domain": "food",
+  "tool": "log_food"
+ },
+ {
+  "question": "What's my reading today?",
+  "domain": "study",
+  "tool": "study_today"
+ },
+ {
+  "question": "Did I do my scripture reading?",
+  "domain": "study",
+  "tool": "study_today"
+ },
+ {
+  "question": "What chapter am I on in my study plan?",
+  "domain": "study",
+  "tool": "study_today"
+ },
+ {
+  "question": "What's today's reading in Hearken?",
+  "domain": "study",
+  "tool": "study_today"
+ },
+ {
+  "question": "Call Little Caesars in Springville",
+  "domain": "phone",
+  "tool": "place_call"
+ },
+ {
+  "question": "Call mom",
+  "domain": "phone",
+  "tool": "place_call"
+ },
+ {
+  "question": "Call the nearest Costco",
+  "domain": "phone",
+  "tool": "place_call"
+ },
+ {
+  "question": "Phone Sarah",
+  "domain": "phone",
+  "tool": "place_call"
+ },
+ {
+  "question": "Call Cafe Rio",
+  "domain": "phone",
+  "tool": "place_call"
+ },
+ {
+  "question": "Text Ana that I'm running 10 minutes late",
+  "domain": "phone",
+  "tool": "send_text"
+ },
+ {
+  "question": "Send a message to Sarah saying happy birthday",
+  "domain": "phone",
+  "tool": "send_text"
+ },
+ {
+  "question": "Text my wife I'm on my way home",
+  "domain": "phone",
+  "tool": "send_text"
+ },
+ {
+  "question": "Message Mike that practice is canceled",
+  "domain": "phone",
+  "tool": "send_text"
+ },
+ {
+  "question": "Email Coach Davis that Max will miss practice Thursday",
+  "domain": "phone",
+  "tool": "draft_email"
+ },
+ {
+  "question": "Draft an email to the landlord about the broken dishwasher",
+  "domain": "phone",
+  "tool": "draft_email"
+ },
+ {
+  "question": "Write an email to Sarah thanking her for dinner",
+  "domain": "phone",
+  "tool": "draft_email"
+ },
+ {
+  "question": "Remind me to take out the trash tonight at 8",
+  "domain": "phone",
+  "tool": "add_reminder"
+ },
+ {
+  "question": "Remind me to call the dentist tomorrow morning",
+  "domain": "phone",
+  "tool": "add_reminder"
+ },
+ {
+  "question": "Add a reminder to buy a birthday gift",
+  "domain": "phone",
+  "tool": "add_reminder"
+ },
+ {
+  "question": "Remind me in 2 hours to move the laundry",
+  "domain": "phone",
+  "tool": "add_reminder"
+ },
+ {
+  "question": "Set a timer for 10 minutes",
+  "domain": "phone",
+  "tool": "set_timer"
+ },
+ {
+  "question": "Start a 25 minute timer for the pasta",
+  "domain": "phone",
+  "tool": "set_timer"
+ },
+ {
+  "question": "Timer for 90 seconds",
+  "domain": "phone",
+  "tool": "set_timer"
+ },
+ {
+  "question": "Set an alarm for 6:30am",
+  "domain": "phone",
+  "tool": "set_alarm"
+ },
+ {
+  "question": "Wake me up at 7 tomorrow",
+  "domain": "phone",
+  "tool": "set_alarm"
+ },
+ {
+  "question": "What's on my calendar today?",
+  "domain": "phone",
+  "tool": "my_calendar"
+ },
+ {
+  "question": "Do I have any meetings tomorrow?",
+  "domain": "phone",
+  "tool": "my_calendar"
+ },
+ {
+  "question": "What's my schedule this week?",
+  "domain": "phone",
+  "tool": "my_calendar"
+ },
+ {
+  "question": "Add a meeting with Jordan tomorrow at 2pm to my calendar",
+  "domain": "phone",
+  "tool": "add_my_event"
+ },
+ {
+  "question": "Put lunch with Sam on my calendar Friday at noon",
+  "domain": "phone",
+  "tool": "add_my_event"
+ },
+ {
+  "question": "Directions to Costco",
+  "domain": "phone",
+  "tool": "directions"
+ },
+ {
+  "question": "Navigate to the nearest gas station",
+  "domain": "phone",
+  "tool": "directions"
+ },
+ {
+  "question": "How do I get to Thanksgiving Point?",
+  "domain": "phone",
+  "tool": "directions"
+ },
+ {
+  "question": "Remember that my usual store is the Springville Smith's",
+  "domain": "general",
+  "tool": "remember"
+ },
+ {
+  "question": "Remember that I like my coffee black",
+  "domain": "general",
+  "tool": "remember"
+ },
+ {
+  "question": "Forget what I told you about my usual store",
+  "domain": "general",
+  "tool": "forget"
+ },
+ {
+  "question": "Who's in our household?",
+  "domain": "general",
+  "tool": "household_people"
+ },
+ {
+  "question": "How long do I boil an egg?",
+  "domain": "general",
+  "tool": ""
+ },
+ {
+  "question": "What's the capital of Australia?",
+  "domain": "general",
+  "tool": ""
+ },
+ {
+  "question": "Tell me a joke",
+  "domain": "general",
+  "tool": ""
+ },
+ {
+  "question": "Open my meal plan in BigTable",
+  "domain": "general",
+  "tool": "open_app"
+ },
+ {
+  "question": "Thanks Ember",
+  "domain": "general",
+  "tool": ""
+ },
+ {
+  "question": "Can we afford to eat out this weekend?",
+  "domain": "money",
+  "tool": "budgets"
+ },
+ {
+  "question": "Plan dinners for next week within our grocery budget",
+  "domain": "meals",
+  "tool": "meals_planned"
+ },
+ {
+  "question": "What's going on today?",
+  "domain": "family",
+  "tool": "family_calendar"
+ },
+ {
+  "question": "How's our week looking for money and meals?",
+  "domain": "money",
+  "tool": "spending"
+ },
+ {
+  "question": "Do the kids have anything after school and did they do their chores?",
+  "domain": "family",
+  "tool": "chores"
+ },
+ {
+  "question": "Is there time to cook before practice tonight?",
+  "domain": "family",
+  "tool": "family_calendar"
+ }
+]

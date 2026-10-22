@@ -87,6 +87,9 @@ nonisolated struct EmberWatchContext: Codable, Sendable {
     /// "Tonight's dinner: Sheet-Pan Chicken Fajitas", "Groceries budget: $86 left of $300".
     var facts: [String]
     var updatedAt: Date
+    /// Who owns the household when this person joined someone else's (their iCloud zones are
+    /// shared from that owner); nil when it's theirs.
+    var householdOwner: String? = nil
 
     var allowsClaude: Bool { cloudHelp == "appleAndClaude" }
 }

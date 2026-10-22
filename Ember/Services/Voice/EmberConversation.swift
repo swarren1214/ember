@@ -37,6 +37,8 @@ final class EmberConversation {
     private(set) var question = ""
     /// The answer being written, as it streams.
     private(set) var liveAnswer = ""
+    /// What a "yes", "undo" or a tapped Confirm did, shown under the answer it belongs to.
+    private(set) var localReply: String?
 
     /// How long a silence ends your turn.
     static let pause: TimeInterval = 0.9
@@ -52,6 +54,8 @@ final class EmberConversation {
     @ObservationIgnored private var exchange = 0
     /// A handoff to open once the answer has been spoken (a call).
     @ObservationIgnored private var openWhenSpoken: URL?
+    /// Ember just asked something (which one, or whether to go ahead).
+    @ObservationIgnored private var awaitsChoice = false
     @ObservationIgnored private var settled = ""
     @ObservationIgnored private var volatile = ""
     @ObservationIgnored private var consumedUntil = CMTime.zero
@@ -82,6 +86,25 @@ final class EmberConversation {
         }
     }
 
+    /// Says what a tapped Confirm or Undo did, in the answer's place.
+    func speakResult(_ text: String) {
+        exchange += 1
+        let current = exchange
+        localReply = text
+        phase = .answering
+        Task {
+            if !audio.isRunning { try? await startAudio() }
+            guard current == exchange else { return }
+            speaker.begin { [weak self] in
+                guard let self, current == self.exchange else { return }
+                self.phase = .idle
+                self.stopAudio()
+            }
+            speaker.say(text)
+            speaker.finish()
+        }
+    }
+
     /// The X while listening: back to idle, nothing sent.
     func cancel() {
         exchange += 1
@@ -93,7 +116,8 @@ final class EmberConversation {
 
     // MARK: Listening
 
-    private func listen() async {
+    /// `keepingAnswer`: a follow-up Ember asked for; the question and choices stay on screen.
+    private func listen(keepingAnswer: Bool = false) async {
         guard await Self.permissionsGranted() else {
             phase = .failed("Ember needs the microphone and speech recognition to listen. Turn them on in Settings › Ember.")
             return
@@ -107,7 +131,8 @@ final class EmberConversation {
             return
         }
         speaker.stop()
-        clearTurn()
+        if !keepingAnswer { clearTurn() }
+        EmberData.shared.prefetch()
         lastHeard = .now
         feed?.setMuted(false)
         phase = .listening
@@ -258,17 +283,46 @@ final class EmberConversation {
         question = text
         liveAnswer = ""
         openWhenSpoken = nil
+        awaitsChoice = false
         speaker.begin { [weak self] in
             guard let self, current == self.exchange else { return }
             // Done talking: the microphone turns off until the next tap.
             self.phase = .idle
             self.stopAudio()
-            // The microphone is off now, so the call screen gets the audio. iOS asks before dialing.
+            // The microphone is off now, so a call, Maps or a message sheet gets the audio.
             if let url = self.openWhenSpoken {
                 self.openWhenSpoken = nil
                 UIApplication.shared.open(url)
+            } else if EmberCompose.shared.hasQueued {
+                EmberCompose.shared.presentQueued()
+            } else if self.awaitsChoice {
+                // Ember asked a question ("which one?", "should I?"): listen for the answer
+                // without another tap.
+                self.awaitsChoice = false
+                Task { await self.listen(keepingAnswer: true) }
             }
         }
+
+        // "Yes", "no" and "undo that" answer a waiting action here, without a model, so what
+        // happens is exactly what the card said.
+        if let reply = EmberActions.shared.reply(in: text) {
+            answering = Task { [weak self] in
+                guard let self else { return }
+                let spoken: String = switch reply {
+                case .yes: await EmberActions.shared.confirm()
+                case .no: EmberActions.shared.cancel()
+                case .undo: await EmberActions.shared.undo()
+                }
+                guard current == self.exchange else { return }
+                self.phase = .answering
+                self.localReply = spoken
+                self.speaker.say(spoken)
+                self.speaker.finish()
+            }
+            return
+        }
+
+        localReply = nil
         answering = Task { [weak self] in
             guard let self else { return }
             let turn = await self.brain.ask(text, client: .iphone) { sentence in
@@ -279,6 +333,7 @@ final class EmberConversation {
             }
             guard current == self.exchange else { return }
             self.openWhenSpoken = turn.cards.first { $0.opensWhenSpoken }?.link
+            self.awaitsChoice = turn.asksBack
             if self.phase == .thinking { self.phase = .answering }
             self.speaker.finish()
         }

@@ -7,8 +7,14 @@ import UIKit
 // Ember's voice. Sentences are queued as they arrive (the brain streams them), so Ember starts
 // talking on the first sentence while the rest of the answer is still being written.
 //
-// - Kokoro (`af_heart`) when the shared model is on this iPhone; Apple's best installed voice
-//   until then and in the Simulator.
+// - Text is made ready to be heard first (EmberSpeech: money, times, dates, numbers; and the
+//   pronunciations in Settings).
+// - The first sentence is spoken alone, so speech starts fast; after that, the sentences waiting
+//   are spoken together, so the intonation carries across them instead of restarting.
+// - Kokoro (the voice and speed chosen in Settings) when the shared model is on this iPhone;
+//   Apple's best installed voice until then and in the Simulator.
+// - Each piece is trimmed of its own silence, faded in and out, and brought to one loudness;
+//   pieces are joined by even pauses, so there are no clicks or uneven gaps.
 // - Everything plays through `EmberAudio`'s engine, so echo cancellation knows what Ember is
 //   saying and you can talk over it.
 
@@ -30,10 +36,16 @@ final class EmberSpeaker {
     /// No more sentences are coming for this answer.
     @ObservationIgnored private var closed = false
     @ObservationIgnored private var pendingBuffers = 0
+    /// Pieces produced for this answer (the first is spoken alone).
+    @ObservationIgnored private var produced = 0
     @ObservationIgnored private var onFinished: (() -> Void)?
     @ObservationIgnored private let log = Logger(subsystem: "com.stephenwarren.ember", category: "voice")
 
-    static let voiceID = KokoroVoices.defaultID
+    static var voiceID: String { EmberSettings.shared.voiceID }
+
+    /// The pause between pieces, and the longest a group of sentences gets.
+    private static let pause: TimeInterval = 0.18
+    private static let groupLimit = 240
 
     var usesNaturalVoice: Bool {
         EmberSettings.shared.naturalVoice && KokoroModel.shared.isReady
@@ -45,12 +57,13 @@ final class EmberSpeaker {
         stop()
         self.onFinished = onFinished
         closed = false
+        produced = 0
         if usesNaturalVoice { KokoroSynth.shared.prewarm() }
     }
 
     /// Queues one sentence.
     func say(_ sentence: String) {
-        let text = KokoroText.prepare(sentence)
+        let text = EmberSpeech.prepare(Self.pronounce(sentence))
         guard !text.isEmpty else { return }
         guard EmberAudio.shared.playVoice() else { return }
         queue.append(text)
@@ -83,13 +96,23 @@ final class EmberSpeaker {
     private func produceNext() {
         guard !producing, !queue.isEmpty else { return }
         producing = true
-        let sentence = queue.removeFirst()
+        var sentence = queue.removeFirst()
+        // After the first piece, speak what's waiting together.
+        if produced > 0 {
+            while let next = queue.first, sentence.count + next.count < Self.groupLimit {
+                sentence += " " + queue.removeFirst()
+            }
+        }
+        produced += 1
         let current = generation
         if usesNaturalVoice {
+            let tuning = VoiceTuning(pace: EmberSettings.shared.voiceSpeed, expressiveness: 1)
+            let voice = Self.voiceID
             Task {
                 do {
                     let gpu = EmberForeground.isActive
-                    let samples = try await KokoroSynth.shared.synthesize(sentence, voice: Self.voiceID, gpu: gpu)
+                    let raw = try await KokoroSynth.shared.synthesize(sentence, voice: voice, tuning: tuning, gpu: gpu)
+                    let samples = await Task.detached(priority: .userInitiated) { EmberVoicePolish.polish(raw, sampleRate: EmberAudio.playbackFormat.sampleRate) }.value
                     self.receivedKokoro(samples, generation: current)
                 } catch {
                     guard current == self.generation else { return }
@@ -106,6 +129,9 @@ final class EmberSpeaker {
         guard current == generation else { return }
         if !samples.isEmpty, let buffer = Self.buffer(from: samples) {
             schedule(buffer, generation: current)
+            if let gap = Self.buffer(from: [Float](repeating: 0, count: Int(Self.pause * EmberAudio.playbackFormat.sampleRate))) {
+                schedule(gap, generation: current)
+            }
         }
         sentenceProduced(generation: current)
     }
@@ -113,7 +139,7 @@ final class EmberSpeaker {
     private func speakWithSystemVoice(_ sentence: String, generation current: Int) {
         let utterance = AVSpeechUtterance(string: sentence)
         utterance.voice = Self.bestSystemVoice
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * Float(min(max(EmberSettings.shared.voiceSpeed, 0.9), 1.2))
         Self.write(utterance, with: synthesizer) { [weak self] buffer in
             let speaker = self
             Task { @MainActor in speaker?.receivedSystem(buffer, generation: current) }
@@ -184,6 +210,16 @@ final class EmberSpeaker {
         player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in done() }
     }
 
+    /// The pronunciations from Settings, applied to whole words.
+    static func pronounce(_ text: String) -> String {
+        var result = text
+        for (word, spoken) in EmberSettings.shared.pronunciations where !word.isEmpty && !spoken.isEmpty {
+            let pattern = "\\b" + NSRegularExpression.escapedPattern(for: word) + "\\b"
+            result = result.replacingOccurrences(of: pattern, with: spoken, options: [.regularExpression, .caseInsensitive])
+        }
+        return result
+    }
+
     /// The best-sounding installed voice for the person's language: Premium, then Enhanced.
     static var bestSystemVoice: AVSpeechSynthesisVoice? {
         let language = Locale.current.language.languageCode?.identifier ?? "en"
@@ -200,4 +236,43 @@ final class EmberSpeaker {
 /// Whether the app is in the foreground (Kokoro may use the GPU only then).
 enum EmberForeground {
     static var isActive: Bool { UIApplication.shared.applicationState == .active }
+}
+
+/// Makes each piece of Kokoro audio sit well next to the others: its own leading and trailing
+/// silence trimmed (the pauses between pieces are added evenly instead), 5 ms fades so nothing
+/// clicks, and one loudness for every piece with a soft limit on peaks.
+nonisolated enum EmberVoicePolish {
+    static func polish(_ input: [Float], sampleRate: Double) -> [Float] {
+        guard input.count > 100 else { return input }
+        let threshold: Float = 0.004
+        let margin = Int(0.02 * sampleRate)
+        guard let first = input.firstIndex(where: { abs($0) > threshold }),
+              let last = input.lastIndex(where: { abs($0) > threshold }) else { return [] }
+        var samples = Array(input[max(0, first - margin)...min(input.count - 1, last + margin)])
+
+        // Loudness: the RMS of the voiced part to about -18 dBFS, within sensible bounds.
+        var sum: Float = 0
+        var voiced = 0
+        for sample in samples where abs(sample) > threshold {
+            sum += sample * sample
+            voiced += 1
+        }
+        if voiced > 0 {
+            let rms = (sum / Float(voiced)).squareRoot()
+            let gain = min(max(0.125 / max(rms, 0.0001), 0.5), 3)
+            for index in samples.indices {
+                let value = samples[index] * gain
+                // Soft limit above 0.85.
+                samples[index] = abs(value) < 0.85 ? value : (value > 0 ? 1 : -1) * (0.85 + 0.15 * tanh((abs(value) - 0.85) / 0.15))
+            }
+        }
+
+        let fade = min(Int(0.005 * sampleRate), samples.count / 2)
+        for index in 0..<fade {
+            let gain = Float(index) / Float(fade)
+            samples[index] *= gain
+            samples[samples.count - 1 - index] *= gain
+        }
+        return samples
+    }
 }

@@ -13,7 +13,7 @@ final class WatchSpeaker {
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, mode: .voicePrompt, options: [.duckOthers])
         try? session.setActive(true)
-        let utterance = AVSpeechUtterance(string: text)
+        let utterance = AVSpeechUtterance(string: EmberSpeech.prepare(text))
         utterance.voice = Self.bestVoice
         synthesizer.speak(utterance)
     }

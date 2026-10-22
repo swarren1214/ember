@@ -18,6 +18,7 @@ struct EmberHomeView: View {
     @State private var isTyping = false
     @State private var typed = ""
     @State private var showsSent = false
+    @State private var compose = EmberCompose.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Mode: Equatable { case idle, listening, thinking, answer }
@@ -78,6 +79,10 @@ struct EmberHomeView: View {
         }
         .sheet(isPresented: $showsSent) {
             EmberSentSheet(turn: brain.latest)
+        }
+        .sheet(item: $compose.presented) { request in
+            EmberComposeSheet(request: request) { compose.presented = nil }
+                .ignoresSafeArea()
         }
     }
 
@@ -217,11 +222,14 @@ struct EmberHomeView: View {
 
     private var suggestions: [String] {
         var result: [String] = []
-        if context.mealPlan != nil { result.append("What’s for dinner tonight?") }
-        if context.groceryBudget != nil, !context.isKid { result.append("How’s the grocery budget?") }
+        let hour = Calendar.current.component(.hour, from: .now)
+        if context.mealPlan != nil, hour >= 14 { result.append("What’s for dinner tonight?") }
+        if settings.canRead(.suffice) { result.append("How much did we spend this week?") }
+        if settings.canRead(.caloma) { result.append(hour < 12 ? "What’s on the calendar today?" : "Did the kids finish their chores?") }
+        if context.foodLog != nil { result.append("How many calories do I have left?") }
         if context.reading != nil { result.append("What’s my reading today?") }
-        if result.count < 3 { result.append("Who’s in our household?") }
-        if result.count < 3, context.groceries != nil { result.append("How much is left on the grocery list?") }
+        if result.count < 3 { result.append("Add milk to the grocery list") }
+        if result.count < 3 { result.append("Set a timer for 10 minutes") }
         return Array(result.prefix(3))
     }
 
@@ -296,7 +304,7 @@ struct EmberHomeView: View {
     }
 
     private var readingApps: [HearthApp] {
-        [HearthApp.bigtable, .suffice, .caloma, .hearken].filter { settings.canRead($0) && !(context.isKid && $0 == .suffice) }
+        [HearthApp.bigtable, .suffice, .caloma, .sated, .hearken].filter { settings.canRead($0) }
     }
 
     // MARK: Answer
@@ -318,6 +326,14 @@ struct EmberHomeView: View {
                     .contentTransition(.interpolate)
                     .animation(.smooth(duration: 0.4), value: conversation.liveAnswer)
                     .fixedSize(horizontal: false, vertical: true)
+
+                if let reply = conversation.localReply {
+                    Text(reply)
+                        .font(.title3.weight(.medium))
+                        .foregroundStyle(EmberTheme.accentSoft)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .transition(.opacity.combined(with: .offset(y: 8)))
+                }
 
                 if let turn = shownTurn {
                     sourcesLine(turn)

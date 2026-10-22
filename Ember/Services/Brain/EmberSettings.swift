@@ -56,9 +56,25 @@ final class EmberSettings {
         didSet { defaults.set(naturalVoice, forKey: Keys.naturalVoice) }
     }
 
-    /// Kids can talk to Ember: on device only, and only about meals, study and the calendar.
-    var kidsCanTalk: Bool {
-        didSet { defaults.set(kidsCanTalk, forKey: Keys.kidsCanTalk) }
+    /// The Kokoro voice ("af_heart") and how fast it speaks (0.9 to 1.2).
+    var voiceID: String {
+        didSet { defaults.set(voiceID, forKey: Keys.voiceID) }
+    }
+
+    var voiceSpeed: Double {
+        didSet { defaults.set(voiceSpeed, forKey: Keys.voiceSpeed) }
+    }
+
+    /// How Ember should say a word: "Caloma" → "kuh LOH muh". Applied before speaking.
+    var pronunciations: [String: String] {
+        didSet { defaults.set(pronunciations, forKey: Keys.pronunciations) }
+    }
+
+    /// Things the person asked Ember to remember about them ("my store is the Springville
+    /// Smith's"). Kept on this iPhone; the on-device model reads them, and they're shown and
+    /// deletable in What Ember Knows.
+    var remembered: [String] {
+        didSet { defaults.set(remembered, forKey: Keys.remembered) }
     }
 
     @ObservationIgnored private let defaults = UserDefaults.standard
@@ -67,7 +83,10 @@ final class EmberSettings {
         static let cloudHelp = "ember.cloudHelp"
         static let readable = "ember.readable"
         static let naturalVoice = "ember.naturalVoice"
-        static let kidsCanTalk = "ember.kidsCanTalk"
+        static let voiceID = "ember.voiceID"
+        static let voiceSpeed = "ember.voiceSpeed"
+        static let pronunciations = "ember.pronunciations"
+        static let remembered = "ember.remembered"
     }
 
     /// The apps Ember can read from today (the others publish nothing yet).
@@ -81,8 +100,14 @@ final class EmberSettings {
             readable = Set(Self.sources.filter { $0 != .trove })
         }
         naturalVoice = defaults.object(forKey: Keys.naturalVoice) as? Bool ?? true
-        kidsCanTalk = defaults.object(forKey: Keys.kidsCanTalk) as? Bool ?? false
+        voiceID = defaults.string(forKey: Keys.voiceID) ?? KokoroVoices.defaultID
+        voiceSpeed = defaults.object(forKey: Keys.voiceSpeed) as? Double ?? 1.05
+        pronunciations = defaults.dictionary(forKey: Keys.pronunciations) as? [String: String] ?? Self.defaultPronunciations
+        remembered = defaults.stringArray(forKey: Keys.remembered) ?? []
     }
+
+    /// Hearth's own names, said right from the start.
+    static let defaultPronunciations = ["Caloma": "kuh LOH muh", "Sated": "SAY tid", "Hearken": "HAR kun", "Suffice": "suh FICE"]
 
     func canRead(_ app: HearthApp) -> Bool { readable.contains(app) }
 

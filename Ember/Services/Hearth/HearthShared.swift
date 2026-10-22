@@ -432,6 +432,55 @@ nonisolated struct HearthAllowance: HearthPublication, Hashable {
     }
 }
 
+// MARK: - Food log (Sated)
+
+/// What the person using this device ate: the last seven days, each with its totals and what
+/// was logged, and their daily goals. Written by Sated whenever the log changes (alongside its
+/// widgets); Ember reads it to answer "how many calories do I have left?" and "what did I eat
+/// yesterday?". It stays on this device, in the app group.
+nonisolated struct HearthFoodLog: HearthPublication, Hashable {
+    static let kind = "foodLog"
+    static let version = 1
+
+    var goals: Totals
+    /// Oldest first, ending today.
+    var days: [Day]
+    /// Opens Sated's Add Food.
+    var addLink: String? = "sated://add"
+
+    nonisolated struct Totals: Codable, Hashable, Sendable {
+        var calories: Double
+        var protein: Double
+        var carbs: Double
+        var fat: Double
+        var fiber: Double
+    }
+
+    nonisolated struct Day: Codable, Hashable, Sendable, Identifiable {
+        /// "YYYY-MM-DD".
+        var date: String
+        var totals: Totals
+        /// At most 40 a day, in the order eaten.
+        var entries: [Entry]
+        var id: String { date }
+    }
+
+    nonisolated struct Entry: Codable, Hashable, Sendable {
+        var name: String
+        /// "breakfast", "lunch", "dinner", "snack".
+        var meal: String
+        var calories: Double
+        var protein: Double
+        var servings: Double
+        var place: String?
+    }
+
+    func day(_ date: Date, calendar: Calendar = .current) -> Day? {
+        let key = HearthDay.string(from: date, calendar: calendar)
+        return days.first { $0.date == key }
+    }
+}
+
 // MARK: - Reading (Hearken)
 
 /// The reading Hearken's plans have scheduled, by day, for the person using this device:

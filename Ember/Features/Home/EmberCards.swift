@@ -23,7 +23,7 @@ struct EmberCardView: View {
                 Button {
                     openURL(link)
                 } label: {
-                    Label(title, systemImage: "arrow.up.forward")
+                    Label(title, systemImage: link.scheme == "tel" ? "phone.fill" : "arrow.up.forward")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(EmberTheme.text)
                 }
@@ -68,35 +68,11 @@ struct EmberCardView: View {
                     .background(.white.opacity(0.06), in: .capsule)
             }
 
-        case .groceries(let remaining, let cost):
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("\(remaining)")
-                    .font(.system(size: 38, weight: .bold, design: .rounded))
-                    .foregroundStyle(EmberTheme.text)
-                    .contentTransition(.numericText())
-                Text(remaining == 1 ? "item left to buy" : "items left to buy")
-                    .font(.subheadline)
-                    .foregroundStyle(EmberTheme.ash)
-            }
-            if let cost {
-                Text("About \(cost) for the whole list")
-                    .font(.subheadline)
-                    .foregroundStyle(EmberTheme.ash)
-            }
+        case .answer(let answer):
+            EmberAnswerView(answer: answer)
 
-        case .budget(let name, let left, let spent, let fraction):
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(left)
-                    .font(.system(size: 38, weight: .bold, design: .rounded))
-                    .foregroundStyle(EmberTheme.text)
-                Text("left in \(name)")
-                    .font(.subheadline)
-                    .foregroundStyle(EmberTheme.ash)
-            }
-            EmberBudgetBar(fraction: fraction)
-            Text(spent)
-                .font(.footnote)
-                .foregroundStyle(EmberTheme.smoke)
+        case .action(let id, let title, let detail, let symbol):
+            EmberActionView(id: id, title: title, detail: detail, symbol: symbol)
 
         case .reading(let lines):
             VStack(alignment: .leading, spacing: 10) {
@@ -134,6 +110,18 @@ struct EmberCardView: View {
                     Text(line).font(.body).foregroundStyle(EmberTheme.text)
                 }
             }
+
+        case .call(let name, let detail, let logo):
+            HStack(spacing: 12) {
+                EmberLogoTile(logo: logo, name: name)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(name).font(.body.weight(.semibold)).foregroundStyle(EmberTheme.text)
+                    if !detail.isEmpty {
+                        Text(detail).font(.footnote).foregroundStyle(EmberTheme.ash).lineLimit(2)
+                    }
+                }
+            }
+            .accessibilityElement(children: .combine)
 
         case .handoff(let title, let detail, let symbol):
             HStack(spacing: 12) {
@@ -196,5 +184,190 @@ struct EmberBudgetBar: View {
         .accessibilityElement()
         .accessibilityLabel("Spent")
         .accessibilityValue(fraction.formatted(.percent.precision(.fractionLength(0))))
+    }
+}
+
+/// A business's logo from Logo.dev on a white tile (logos are drawn for light backgrounds), or
+/// a person's initial when there's no logo.
+struct EmberLogoTile: View {
+    let logo: URL?
+    let name: String
+    var size: CGFloat = 44
+
+    var body: some View {
+        Group {
+            if let logo {
+                AsyncImage(url: logo, transaction: Transaction(animation: .easeOut(duration: 0.2))) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFit()
+                            .padding(size * 0.12)
+                            .frame(width: size, height: size)
+                            .background(.white)
+                    default:
+                        initial
+                    }
+                }
+            } else {
+                initial
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(.rect(cornerRadius: size * 0.26))
+        .accessibilityHidden(true)
+    }
+
+    private var initial: some View {
+        Text(String(name.prefix(1)).uppercased())
+            .font(.system(size: size * 0.42, weight: .bold, design: .rounded))
+            .foregroundStyle(EmberTheme.text)
+            .frame(width: size, height: size)
+            .background(.white.opacity(0.08))
+    }
+}
+
+/// Figures Ember worked out: a big value, a line under it, a bar for a budget, and rows.
+struct EmberAnswerView: View {
+    let answer: EmberAnswer
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(answer.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(EmberTheme.ash)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(answer.value)
+                        .font(.system(size: 34, weight: .bold, design: .rounded))
+                        .foregroundStyle(EmberTheme.text)
+                        .contentTransition(.numericText())
+                    if !answer.subtitle.isEmpty {
+                        Text(answer.subtitle)
+                            .font(.subheadline)
+                            .foregroundStyle(EmberTheme.ash)
+                    }
+                }
+            }
+            .accessibilityElement(children: .combine)
+            if let fraction = answer.fraction {
+                EmberBudgetBar(fraction: fraction)
+            }
+            if !answer.rows.isEmpty {
+                VStack(spacing: 8) {
+                    ForEach(answer.rows) { row in
+                        HStack(spacing: 10) {
+                            if let done = row.done {
+                                Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(done ? EmberTheme.success : EmberTheme.smoke)
+                                    .accessibilityHidden(true)
+                            }
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(row.title).font(.body).foregroundStyle(EmberTheme.text).lineLimit(1)
+                                if !row.detail.isEmpty {
+                                    Text(row.detail).font(.footnote).foregroundStyle(EmberTheme.ash).lineLimit(1)
+                                }
+                            }
+                            Spacer(minLength: 8)
+                            Text(row.value)
+                                .font(.body.monospacedDigit())
+                                .foregroundStyle(EmberTheme.text)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityValue(row.done == true ? "Done" : "")
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A change Ember is making: Confirm and Cancel while it waits, then what happened, with Undo
+/// for a couple of minutes.
+struct EmberActionView: View {
+    let id: UUID
+    let title: String
+    let detail: String
+    let symbol: String
+
+    @State private var actions = EmberActions.shared
+    @State private var conversation = EmberConversation.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: symbol)
+                    .font(.title3)
+                    .foregroundStyle(EmberTheme.text)
+                    .frame(width: 36, height: 36)
+                    .background(.white.opacity(0.08), in: .rect(cornerRadius: 10))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(.body.weight(.semibold)).foregroundStyle(EmberTheme.text)
+                    if !detail.isEmpty {
+                        Text(detail).font(.footnote).foregroundStyle(EmberTheme.ash).lineLimit(3)
+                    }
+                }
+            }
+            status
+        }
+    }
+
+    @ViewBuilder
+    private var status: some View {
+        switch actions.states[id] {
+        case .waiting:
+            HStack(spacing: 10) {
+                Button {
+                    Task { conversation.speakResult(await actions.confirm(id)) }
+                } label: {
+                    Label("Confirm", systemImage: "checkmark")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.glassProminent)
+                .tint(EmberTheme.accent)
+                Button("Cancel") { _ = actions.cancel(id) }
+                    .font(.subheadline.weight(.semibold))
+                    .buttonStyle(.glass)
+                    .tint(.primary)
+            }
+        case .working:
+            ProgressView().tint(EmberTheme.text)
+        case .done:
+            if actions.canUndo(id) {
+                HStack {
+                    Label("Done", systemImage: "checkmark.circle.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(EmberTheme.success)
+                    Spacer()
+                    Button {
+                        Task { conversation.speakResult(await actions.undo(id)) }
+                    } label: {
+                        Label("Undo", systemImage: "arrow.uturn.backward")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(EmberTheme.text)
+                    }
+                    .buttonStyle(.glass)
+                }
+            } else {
+                Label("Done", systemImage: "checkmark.circle.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(EmberTheme.success)
+            }
+        case .undone:
+            Label("Undone", systemImage: "arrow.uturn.backward.circle")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(EmberTheme.ash)
+        case .cancelled:
+            Label("Not done", systemImage: "xmark.circle")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(EmberTheme.ash)
+        case .failed(let reason):
+            Label(reason, systemImage: "exclamationmark.triangle")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color(red: 1, green: 0.55, blue: 0.5))
+        case nil:
+            EmptyView()
+        }
     }
 }

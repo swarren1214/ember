@@ -6,9 +6,16 @@ import os
 import OSLog
 import Speech
 
-// The microphone and Ember's voice share one audio engine with Apple's voice processing on, so
-// echo cancellation removes Ember's own voice from what the microphone hears and you can talk
-// over it (barge-in). Adapted from BigTable's AskSpeech.swift.
+// The microphone and Ember's voice share one audio engine, with echo cancellation so Ember's own
+// voice is removed from what the microphone hears and you can talk over it (barge-in). Adapted
+// from BigTable's AskSpeech.swift.
+//
+// Two ways to cancel the echo, picked per iPhone:
+// - Echo-cancelled input (iPhones that support it): the session stays in its default mode, so
+//   Ember's voice plays through the media path at full quality, and the system cleans the
+//   microphone. Preferred.
+// - Voice processing (all others): the call path. Barge-in works the same, but the voice sounds
+//   like a phone call: narrower and quieter.
 
 // MARK: - Audio session
 
@@ -19,14 +26,23 @@ nonisolated enum EmberAudioSession {
 
     /// The microphone and the spoken replies at once, through voice processing. Speaker by
     /// default, so the conversation isn't stuck in the earpiece; headsets work too.
-    static func activateForConversation() async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+    /// Returns whether the system cleans the microphone itself (echo-cancelled input); when it
+    /// doesn't, the engine turns on voice processing.
+    static func activateForConversation() async throws -> Bool {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, Error>) in
             queue.async {
                 do {
                     let session = AVAudioSession.sharedInstance()
-                    try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers])
-                    try session.setActive(true, options: .notifyOthersOnDeactivation)
-                    continuation.resume()
+                    if session.isEchoCancelledInputAvailable {
+                        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP, .duckOthers])
+                        try session.setPrefersEchoCancelledInput(true)
+                        try session.setActive(true, options: .notifyOthersOnDeactivation)
+                        continuation.resume(returning: session.isEchoCancelledInputEnabled)
+                    } else {
+                        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers])
+                        try session.setActive(true, options: .notifyOthersOnDeactivation)
+                        continuation.resume(returning: false)
+                    }
                 } catch {
                     continuation.resume(throwing: error)
                 }
@@ -174,6 +190,8 @@ final class EmberAudio {
 
     let player = AVAudioPlayerNode()
     private(set) var isRunning = false
+    /// The system cancels the echo (full-quality playback); otherwise voice processing does.
+    private(set) var systemEchoCancellation = false
 
     private let engine = AVAudioEngine()
     private let tap = EmberMicrophoneTap()
@@ -195,7 +213,8 @@ final class EmberAudio {
     func start(sink: @escaping @Sendable (AVAudioPCMBuffer) -> Void) async throws {
         tap.setSink(sink)
         guard !isRunning else { return }
-        try await EmberAudioSession.activateForConversation()
+        systemEchoCancellation = try await EmberAudioSession.activateForConversation()
+        log.notice("Echo cancellation: \(self.systemEchoCancellation ? "system (media path)" : "voice processing", privacy: .public)")
         do {
             try startEngine()
         } catch {
@@ -210,10 +229,12 @@ final class EmberAudio {
     private func startEngine() throws {
         let input = engine.inputNode
         #if !targetEnvironment(simulator)
-        do {
-            try input.setVoiceProcessingEnabled(true)
-        } catch {
-            log.error("Voice processing unavailable: \(error.localizedDescription, privacy: .public)")
+        if !systemEchoCancellation {
+            do {
+                try input.setVoiceProcessingEnabled(true)
+            } catch {
+                log.error("Voice processing unavailable: \(error.localizedDescription, privacy: .public)")
+            }
         }
         #endif
         if !attached {
@@ -254,7 +275,7 @@ final class EmberAudio {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         #if !targetEnvironment(simulator)
-        try? engine.inputNode.setVoiceProcessingEnabled(false)
+        if !systemEchoCancellation { try? engine.inputNode.setVoiceProcessingEnabled(false) }
         #endif
         isRunning = false
         EmberAudioSession.deactivate()

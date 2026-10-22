@@ -1,8 +1,8 @@
 import SwiftUI
 
 // Profile, the HearthKit screen every Hearth app shows, with Ember's own sections: What Ember
-// Knows (the "iPhone · What Ember knows" artboard): Cloud Help, the apps Ember reads, kids, and
-// Ember's voice.
+// Knows (the "iPhone · What Ember knows" artboard): Cloud Help, the apps Ember reads, what it
+// remembers, Ember's voice, and Report a Problem.
 
 struct EmberProfileView: View {
     @State private var profile: HearthAccountProfile?
@@ -16,7 +16,8 @@ struct EmberProfileView: View {
                 message: "This clears Ember’s conversations and settings on this \(DeviceName.current). Your Hearth apps’ data isn’t touched, and Ember’s voice stays downloaded for your other apps."
             ) {
                 EmberBrain.shared.reset()
-                for key in ["ember.cloudHelp", "ember.readable", "ember.naturalVoice", "ember.kidsCanTalk"] {
+                for key in ["ember.cloudHelp", "ember.readable", "ember.naturalVoice", "ember.voiceID", "ember.voiceSpeed",
+                            "ember.pronunciations", "ember.remembered"] {
                     UserDefaults.standard.removeObject(forKey: key)
                 }
             }
@@ -25,7 +26,7 @@ struct EmberProfileView: View {
         } settings: {
             EmberKnowsSections()
         } data: {
-            EmptyView()
+            EmberReportButton()
         } about: {
             Text("Ember’s voice is Kokoro (Apache 2.0), running on your \(DeviceName.current).")
         }
@@ -91,7 +92,7 @@ struct EmberKnowsSections: View {
         }
 
         Section {
-            ForEach([HearthApp.bigtable, .suffice, .caloma, .hearken], id: \.self) { app in
+            ForEach([HearthApp.bigtable, .suffice, .caloma, .sated, .hearken], id: \.self) { app in
                 Toggle(isOn: Binding(
                     get: { settings.canRead(app) },
                     set: { settings.setReadable(app, $0); context.refresh() }
@@ -118,17 +119,51 @@ struct EmberKnowsSections: View {
         } header: {
             Text("Your Hearth Apps")
         } footer: {
-            Text("Ember reads what these apps share on this \(DeviceName.current). It never changes their data: it opens the app for you.")
+            Text("Ember reads these apps’ data from your family’s iCloud and this \(DeviceName.current). It can make changes you ask for, the way the app would, and asks first for anything involving money or the family’s plans.")
         }
 
         Section {
-            Toggle("Kids Can Talk to Ember", isOn: $settings.kidsCanTalk)
+            if settings.remembered.isEmpty {
+                Text("Nothing yet. Say “Remember that…” and Ember keeps it here.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(settings.remembered, id: \.self) { fact in
+                    Text(fact)
+                }
+                .onDelete { settings.remembered.remove(atOffsets: $0) }
+            }
+        } header: {
+            Text("Ember Remembers")
         } footer: {
-            Text("Kids’ questions stay on the \(DeviceName.current), and Ember won’t talk about money with them.")
+            Text("Kept on this \(DeviceName.current) and only used here. Swipe to delete.")
         }
 
         Section {
             Toggle("Natural Voice", isOn: $settings.naturalVoice)
+            if settings.naturalVoice, kokoro.state == .ready {
+                Picker("Voice", selection: $settings.voiceID) {
+                    ForEach(KokoroVoices.choices) { voice in
+                        Text("\(voice.name) · \(voice.detail)").tag(voice.id)
+                    }
+                }
+                .tint(.primary)
+                Button {
+                    EmberConversation.shared.speakResult("Hi, I’m Ember. Dinner’s at six thirty, and you have eighty-six dollars left for groceries.")
+                } label: {
+                    HearthProfileRow("Hear a Sample", systemImage: "play.circle")
+                }
+                .tint(.primary)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent("Speed", value: settings.voiceSpeed.formatted(.number.precision(.fractionLength(2))) + "×")
+                Slider(value: $settings.voiceSpeed, in: 0.9...1.2, step: 0.05)
+                    .tint(EmberTheme.accent)
+            }
+            NavigationLink {
+                EmberPronunciationsView()
+            } label: {
+                HearthProfileRow("Pronunciations", systemImage: "character.bubble", value: "\(settings.pronunciations.count)")
+            }
             switch kokoro.state {
             case .ready:
                 Button("Remove Voice (\(KokoroModel.approximateSize))", role: .destructive) { confirmsRemoveVoice = true }
@@ -163,11 +198,56 @@ struct EmberKnowsSections: View {
     static func what(_ app: HearthApp) -> String {
         switch app {
         case .bigtable: "Meal plan and grocery list"
-        case .suffice: "Grocery budget"
-        case .caloma: "Allowance"
+        case .suffice: "Spending, budgets and bills"
+        case .caloma: "Chores, family calendar and allowance"
+        case .sated: "Food log and goals"
         case .hearken: "Today’s reading"
         default: ""
         }
+    }
+}
+
+/// How Ember says names it gets wrong.
+struct EmberPronunciationsView: View {
+    @State private var settings = EmberSettings.shared
+    @State private var word = ""
+    @State private var spoken = ""
+
+    var body: some View {
+        List {
+            Section {
+                TextField("Word, like Caloma", text: $word)
+                TextField("Say it as, like kuh LOH muh", text: $spoken)
+                Button("Add") {
+                    let key = word.trimmingCharacters(in: .whitespaces)
+                    let value = spoken.trimmingCharacters(in: .whitespaces)
+                    guard !key.isEmpty, !value.isEmpty else { return }
+                    settings.pronunciations[key] = value
+                    word = ""
+                    spoken = ""
+                }
+                .disabled(word.trimmingCharacters(in: .whitespaces).isEmpty || spoken.trimmingCharacters(in: .whitespaces).isEmpty)
+            } footer: {
+                Text("Spell it the way it sounds, with spaces between the parts and the stressed part in capitals.")
+            }
+            Section {
+                ForEach(settings.pronunciations.keys.sorted(), id: \.self) { key in
+                    Button {
+                        EmberConversation.shared.speakResult(key)
+                    } label: {
+                        LabeledContent(key, value: settings.pronunciations[key] ?? "")
+                    }
+                    .tint(.primary)
+                }
+                .onDelete { offsets in
+                    let keys = settings.pronunciations.keys.sorted()
+                    for index in offsets { settings.pronunciations[keys[index]] = nil }
+                }
+            } footer: {
+                Text("Tap one to hear it.")
+            }
+        }
+        .navigationTitle("Pronunciations")
     }
 }
 
@@ -249,5 +329,32 @@ struct EmberChoiceRow: View {
         }
         .padding(.vertical, large ? 4 : 0)
         .contentShape(.rect)
+    }
+}
+
+/// Report a Problem: the last 20 turns, de-identified, in an email the person reads first.
+struct EmberReportButton: View {
+    @State private var request: EmberComposeRequest?
+    @State private var trace = EmberTrace.shared
+
+    var body: some View {
+        Button {
+            let report = EmberComposeRequest(kind: .mail, recipients: ["support@hearthapps.com"], subject: "Ember problem report",
+                                             body: "What went wrong:\n\n\n" + trace.report())
+            if EmberCompose.shared.canMail {
+                request = report
+            } else {
+                EmberCompose.shared.queue(report)
+                EmberCompose.shared.presentQueued()
+            }
+        } label: {
+            HearthProfileRow("Report a Problem", systemImage: "exclamationmark.bubble")
+        }
+        .tint(.primary)
+        .disabled(trace.entries.isEmpty)
+        .sheet(item: $request) { request in
+            EmberComposeSheet(request: request) { self.request = nil }
+                .ignoresSafeArea()
+        }
     }
 }

@@ -3,16 +3,17 @@ import FoundationModels
 import Observation
 import OSLog
 
-// One turn of conversation, routed to the best resource available (implementation plan ›
-// Routing rule), with the privacy rules applied on the way out:
+// One turn of conversation, routed to the best resource available, with the privacy rules
+// applied on the way out:
 //
-//   1. Apple's on-device model, with Ember's tools. Nothing leaves the device.
-//   2. Apple's Private Cloud Compute — not wired yet (needs the iOS 27 entitlement; see README).
+//   1. EmberRouter picks the areas the question is about (and whether it's complex), so only
+//      their tools are offered.
+//   2. Apple's on-device model, with those tools. Nothing leaves the device.
 //   3. Claude through hearth-api, when the person allowed it (Cloud Help) and the turn needs it:
-//      planning across apps or days, no on-device model, or the on-device model couldn't answer.
+//      complex questions, no on-device model, or the on-device model couldn't answer.
 //      Everything sent is de-identified by EmberRedactor; tools still run here.
 //
-// Kids' turns never leave the device. The tier is chosen here, in code, never by a model.
+// The tier is chosen here, in code, never by a model. Ember is for parents and adults.
 
 /// One question and its answer, with what it drew on.
 struct EmberTurn: Identifiable {
@@ -25,6 +26,8 @@ struct EmberTurn: Identifiable {
     /// Exactly what went to the cloud for this turn (privacy rule 6), when anything did.
     var sentToCloud: String?
     var isNotice = false
+    /// Ember asked "which one?" or "should I?": listen for the answer.
+    var asksBack = false
 }
 
 enum EmberClient: String {
@@ -39,7 +42,6 @@ final class EmberBrain {
     private(set) var isThinking = false
 
     @ObservationIgnored private let toolbox = EmberToolbox.shared
-    @ObservationIgnored private var session: LanguageModelSession?
     /// One redactor per conversation, so a person keeps the same token across follow-ups.
     @ObservationIgnored private var redactor: EmberRedactor?
     /// The conversation as the cloud has seen it (already de-identified).
@@ -53,18 +55,16 @@ final class EmberBrain {
 
     var latest: EmberTurn? { turns.last }
 
-    /// Loads the on-device model ahead of the first question.
+    /// Loads the on-device model and fetches the family's data ahead of the first question.
     func prewarm() {
-        guard Self.onDeviceAvailable, session == nil else { return }
-        let session = makeSession()
-        session.prewarm()
-        self.session = session
+        EmberData.shared.prefetch()
+        guard Self.onDeviceAvailable else { return }
+        LanguageModelSession(instructions: EmberPrompt.instructions(recent: [])).prewarm()
     }
 
     /// Clear: a new conversation (new tokens, empty history).
     func reset() {
         turns = []
-        session = nil
         redactor = nil
         cloudHistory = []
     }
@@ -79,21 +79,26 @@ final class EmberBrain {
         isThinking = true
         defer { isThinking = false }
         toolbox.beginTurn()
+        EmberTrace.shared.begin(text)
 
-        let route = Route.choose(for: text, client: client)
+        let decision = await EmberRouter.decide(text, onDevice: Self.onDeviceAvailable)
+        let tools = toolbox.tools(for: decision.domains)
+        let route = Route.choose(complex: decision.isComplex, client: client)
+        EmberTrace.shared.note("domains \(decision.domains.map(\.rawValue).sorted().joined(separator: ",")), \(tools.count) tools, \(route)")
         var turn = EmberTurn(question: text, answer: "")
 
         switch route {
         case .onDevice(let fallbackToCloud):
             do {
-                let answer = try await respondOnDevice(text)
+                let answer = try await respondOnDevice(text, tools: tools)
                 turn.answer = answer
                 turn.tier = .onDevice
                 Self.sentences(in: answer).forEach(onSentence)
             } catch {
                 log.notice("On-device turn failed: \(String(describing: error), privacy: .public)")
+                EmberTrace.shared.note("on-device failed: \(error)")
                 if fallbackToCloud {
-                    turn = await respondInCloud(text, client: client, onSentence: onSentence)
+                    turn = await respondInCloud(text, client: client, tools: toolbox.allowedTools, onSentence: onSentence)
                 } else {
                     turn.answer = Self.message(for: error)
                     turn.isNotice = true
@@ -101,7 +106,7 @@ final class EmberBrain {
                 }
             }
         case .cloud:
-            turn = await respondInCloud(text, client: client, onSentence: onSentence)
+            turn = await respondInCloud(text, client: client, tools: tools, onSentence: onSentence)
         case .unavailable(let reason):
             turn.answer = reason
             turn.isNotice = true
@@ -110,30 +115,33 @@ final class EmberBrain {
 
         if turn.cards.isEmpty { turn.cards = toolbox.takeCards() }
         if turn.sources.isEmpty { turn.sources = toolbox.usedApps }
+        turn.asksBack = toolbox.asksToChoose || EmberActions.shared.hasWaiting
         turns.append(turn)
+        EmberTrace.shared.end(turn)
         return turn
     }
 
     // MARK: Routing
 
-    enum Route: Equatable {
+    enum Route: Equatable, CustomStringConvertible {
         /// `fallbackToCloud`: escalate if the on-device model can't answer.
         case onDevice(fallbackToCloud: Bool)
         case cloud
         case unavailable(String)
 
-        @MainActor
-        static func choose(for question: String, client: EmberClient) -> Route {
-            let settings = EmberSettings.shared
-            let kid = EmberContext.shared.isKid
-            let claude = !kid && settings.cloudHelp?.allowsClaude == true
-            let onDevice = EmberBrain.onDeviceAvailable
-            if kid && !settings.kidsCanTalk {
-                return .unavailable("Ask a parent to turn on Kids Can Talk to Ember.")
+        var description: String {
+            switch self {
+            case .onDevice(let fallback): fallback ? "on device, cloud fallback" : "on device"
+            case .cloud: "cloud"
+            case .unavailable: "unavailable"
             }
-            if onDevice {
-                // Planning across apps or days is where the bigger model earns its keep.
-                if claude && EmberBrain.isPlanning(question) { return .cloud }
+        }
+
+        static func choose(complex: Bool, client: EmberClient) -> Route {
+            let claude = EmberSettings.shared.cloudHelp?.allowsClaude == true
+            if onDeviceAvailable {
+                // Complex questions are where the bigger model earns its keep.
+                if claude && complex { return .cloud }
                 return .onDevice(fallbackToCloud: claude)
             }
             if claude { return .cloud }
@@ -141,15 +149,12 @@ final class EmberBrain {
         }
     }
 
-    /// A cheap, on-device read of whether a question plans across apps or days.
+    /// A cheap read of whether a question plans across apps or days.
     static func isPlanning(_ question: String) -> Bool {
         let text = question.lowercased()
-        let planWords = ["plan ", "plan.", "this week", "next week", "weekend", "afford", "budget for", "schedule", "organize", "figure out", "should we"]
-        let domains = [["dinner", "meal", "cook", "recipe", "groceries", "grocery"],
-                       ["budget", "spend", "money", "afford", "cost"],
-                       ["chore", "calendar", "practice", "game", "birthday", "reading"]]
-        let domainCount = domains.filter { words in words.contains { text.contains($0) } }.count
-        return planWords.contains { text.contains($0) } || domainCount >= 2
+        let planWords = ["plan ", "plan.", "next week", "weekend", "afford", "budget for", "organize", "figure out", "should we",
+                         "compare", "versus", "vs ", "on track", "trend", "why ", "how can we", "help me", "suggest"]
+        return planWords.contains { text.contains($0) }
     }
 
     /// General knowledge with nothing about the household: the only turns Claude may search the
@@ -157,27 +162,33 @@ final class EmberBrain {
     static func isGeneralKnowledge(_ question: String) -> Bool {
         let text = question.lowercased()
         let household = ["we ", "our ", "my ", " me ", "us ", "tonight", "today", "tomorrow", "kids", "budget", "plan"]
-        let general = ["how long", "how do i", "how do you", "what is", "what's the difference", "substitute", "temperature", "how much"]
+        let general = ["how long", "how do i", "how do you", "what is", "what's the difference", "substitute", "temperature", "how much", "who is", "when is", "when does"]
         return general.contains { text.hasPrefix($0) || text.contains(" " + $0) } && !household.contains { text.contains($0) }
     }
 
     // MARK: On device
 
-    private func makeSession() -> LanguageModelSession {
-        LanguageModelSession(tools: EmberTools.onDevice(toolbox), instructions: EmberPrompt.instructions(names: true))
+    /// The last few exchanges, for follow-ups ("and last month?", "text her that").
+    private var recent: [(String, String)] {
+        turns.suffix(3).map { ($0.question, $0.answer) }
     }
 
-    private func respondOnDevice(_ question: String) async throws -> String {
-        let session = self.session ?? makeSession()
-        self.session = session
+    private func respondOnDevice(_ question: String, tools specs: [EmberToolSpec]) async throws -> String {
+        let tools: [any Tool] = specs.compactMap { spec in
+            do { return try spec.deviceTool() } catch {
+                log.error("Tool \(spec.name, privacy: .public) has a bad schema: \(error.localizedDescription, privacy: .public)")
+                return nil
+            }
+        }
+        let session = LanguageModelSession(tools: tools, instructions: EmberPrompt.instructions(recent: recent))
         do {
             let reply = try await session.respond(to: question, options: GenerationOptions(temperature: 0.3)).content
             return EmberPrompt.clean(reply)
         } catch let error as LanguageModelSession.GenerationError {
             if case .exceededContextWindowSize = error {
-                // A long conversation filled the model's context: start fresh and ask again.
-                self.session = makeSession()
-                return EmberPrompt.clean(try await self.session!.respond(to: question).content)
+                // Too much context: try once more without the recent conversation.
+                let fresh = LanguageModelSession(tools: tools, instructions: EmberPrompt.instructions(recent: []))
+                return EmberPrompt.clean(try await fresh.respond(to: question).content)
             }
             throw error
         }
@@ -185,7 +196,8 @@ final class EmberBrain {
 
     // MARK: Claude via hearth-api
 
-    private func respondInCloud(_ question: String, client: EmberClient, retried: Bool = false, onSentence: @escaping (String) -> Void) async -> EmberTurn {
+    private func respondInCloud(_ question: String, client: EmberClient, tools specs: [EmberToolSpec], retried: Bool = false,
+                                onSentence: @escaping (String) -> Void) async -> EmberTurn {
         var turn = EmberTurn(question: question, answer: "", tier: .claude)
         var redactor = self.redactor ?? EmberRedactor(household: EmberContext.shared.redactionPeople)
         defer { self.redactor = redactor }
@@ -195,7 +207,8 @@ final class EmberBrain {
         var sentLog: [String] = []
         var splitter = EmberSentenceSplitter()
         var answer = ""
-        let tools = toolbox.toolNames
+        let names = specs.map(\.name)
+        let definitions = specs.map(\.cloudDefinition)
 
         do {
             for _ in 0..<6 {
@@ -207,13 +220,14 @@ final class EmberBrain {
                     now: Date.now.formatted(date: .complete, time: .shortened),
                     roster: redactor.roster,
                     messages: messages,
-                    tools: tools,
+                    tools: names,
+                    toolDefs: definitions,
                     allowWebSearch: Self.isGeneralKnowledge(question)
                 )
                 // Belt and braces: nothing that still looks like an identifier is sent.
                 let outgoing = Self.text(of: messages)
                 guard EmberRedactor.leaks(in: outgoing).isEmpty else { throw EmberCloudError.refused }
-                if let json = EmberWire.encode(request), let pretty = String(data: json, encoding: .utf8) { sentLog.append(pretty) }
+                if let json = EmberWire.encode(EmberCloudRequestLog(request)), let pretty = String(data: json, encoding: .utf8) { sentLog.append(pretty) }
 
                 var assistantBlocks: [EmberCloudBlock] = []
                 var toolUses: [(id: String, name: String, input: [String: EmberJSON])] = []
@@ -243,7 +257,8 @@ final class EmberBrain {
                 var results: [EmberCloudBlock] = []
                 for use in toolUses {
                     assistantBlocks.append(.toolUse(id: use.id, name: use.name, input: use.input))
-                    let output = await toolbox.run(use.name, input: Self.restored(use.input, with: redactor))
+                    EmberTrace.shared.note("cloud tool \(use.name)")
+                    let output = await toolbox.run(use.name, input: Self.restored(use.input, with: redactor), offered: names)
                     results.append(.toolResult(id: use.id, content: redactor.redact(output)))
                 }
                 messages.append(EmberCloudMessage(role: "assistant", content: assistantBlocks))
@@ -261,9 +276,10 @@ final class EmberBrain {
         } catch let error as URLError where error.code == .userAuthenticationRequired && !retried && answer.isEmpty {
             // The token expired between checking and sending: renew it and ask once more.
             _ = try? await EmberAPI.shared.accessToken(renew: true)
-            return await respondInCloud(question, client: client, retried: true, onSentence: onSentence)
+            return await respondInCloud(question, client: client, tools: specs, retried: true, onSentence: onSentence)
         } catch {
             log.error("Cloud turn failed: \(String(describing: error), privacy: .public)")
+            EmberTrace.shared.note("cloud failed: \(error)")
             turn.answer = (error as? EmberCloudError)?.errorDescription ?? EmberCloudError.failed.errorDescription!
             turn.isNotice = true
             turn.tier = .none
@@ -316,31 +332,59 @@ final class EmberBrain {
     }
 }
 
+/// What "What was sent" shows: the request without the tool definitions (the same every time).
+private struct EmberCloudRequestLog: Encodable {
+    var profile: String
+    var roster: [EmberRosterEntry]
+    var messages: [EmberCloudMessage]
+    var tools: [String]
+
+    init(_ request: EmberCloudRequest) {
+        profile = request.profile
+        roster = request.roster
+        messages = request.messages
+        tools = request.tools
+    }
+}
+
 /// What every model is told about being Ember.
 enum EmberPrompt {
-    /// `names`: the on-device model may see real names; the cloud prompt (hearth-api) is told
-    /// people are tokens.
-    static func instructions(names: Bool) -> String {
+    static func instructions(recent: [(String, String)]) -> String {
         let context = EmberContext.shared
         let me = context.myFirstName.map { " You're talking with \($0)." } ?? ""
-        return """
-        You are Ember, the voice of the family's Hearth apps: BigTable (meals and groceries), Suffice (budget), Sated (food log), \
-        Caloma (chores, allowance and the family calendar) and Hearken (scripture study).\(me) \
+        let city = EmberPlace.city.map { " They're in or near \($0)." } ?? ""
+        var text = """
+        You are Ember, the family's assistant. You know their Hearth apps: BigTable (meals and groceries), Suffice (budget and \
+        bills), Sated (food log), Caloma (chores, allowance and the family calendar) and Hearken (scripture study), and you can \
+        call, text, email, set reminders, timers and alarms, and add calendar events for them.\(me)\(city) \
         Today is \(Date.now.formatted(date: .complete, time: .omitted)) and it's \(Date.now.formatted(date: .omitted, time: .shortened)).
 
         How to answer:
-        - You're heard, not read: one to three short sentences, about 40 words at most. Lead with the answer.
+        - You're heard, not read: one to three short sentences, about 40 words at most. Lead with the answer, usually a number.
+        - Then one useful line at most: the comparison, what's left, or what's next.
         - No lists, headings, emoji or markdown. The screen shows details as cards.
+        - Say money rounded unless cents matter, days as "Thursday" or "tomorrow", and the range you used ("this week, Sunday to today").
         - Warm and plain, like a capable friend. Don't repeat the question or offer more help.
 
         Rules:
         - Always use a tool to read what the apps know. Never guess what's planned, spent or scheduled.
-        - Ember can't change other apps' data. To change something, use open_app and say a button is ready.
-        - To call a person or a business, use place_call. The call screen opens for them; never say Ember can't make calls.
+        - Use the tool that does the thing. To change something, call the tool for it; open_app only when no tool does it.
+        - Some tools wait for the person to confirm. Then ask, in a few words, whether to go ahead. Never say it's done.
         - Only say something happened when a tool says it did.
+        - When something is ambiguous (two people, two places), ask one short question. Otherwise pick the sensible default and say it.
         - Never name someone's allergy; say a meal does or doesn't fit everyone.
-        - If a tool says an app hasn't shared something, say so simply.
+        - If a tool says an app hasn't shared something, say why simply and what fixes it.
+        - Never read out phone numbers, addresses or email addresses.
         """
+        let remembered = EmberSettings.shared.remembered
+        if !remembered.isEmpty {
+            text += "\n\nWhat they've asked you to remember:\n" + remembered.map { "- \($0)" }.joined(separator: "\n")
+        }
+        if !recent.isEmpty {
+            text += "\n\nThe conversation so far (for follow-ups like \"and last month?\" or \"text her that\"):\n"
+            text += recent.map { "They asked: \($0.0)\nYou said: \($0.1)" }.joined(separator: "\n")
+        }
+        return text
     }
 
     /// The reply without markdown the model sometimes adds anyway.

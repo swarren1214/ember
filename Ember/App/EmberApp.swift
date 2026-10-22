@@ -42,10 +42,18 @@ final class EmberAppDelegate: NSObject, UIApplicationDelegate {
 struct EmberRoot: View {
     @State private var settings = EmberSettings.shared
     @State private var showsCloudChoice = false
+    @State private var context = EmberContext.shared
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        EmberHomeView()
+        Group {
+            // Ember is for parents and adults.
+            if context.me?.role == .kid {
+                EmberAdultsOnlyView()
+            } else {
+                EmberHomeView()
+            }
+        }
             .hearthProfile { EmberProfileView() }
             .tint(EmberTheme.accent)
             .task {
@@ -57,13 +65,39 @@ struct EmberRoot: View {
                 if settings.cloudHelp == nil, !ScreenshotMode.isOn { showsCloudChoice = true }
             }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active { EmberContext.shared.refresh() }
+                if phase == .active {
+                    EmberContext.shared.refresh()
+                    EmberData.shared.prefetch()
+                    EmberPlace.refresh()
+                }
             }
             .onOpenURL { url in EmberLinks.open(url) }
             .sheet(isPresented: $showsCloudChoice) {
                 EmberCloudChoiceView()
                     .interactiveDismissDisabled()
             }
+    }
+}
+
+/// What a kid sees: Ember is for the grown-ups in the household.
+struct EmberAdultsOnlyView: View {
+    var body: some View {
+        ZStack {
+            EmberTheme.coal.ignoresSafeArea()
+            VStack(spacing: 18) {
+                EmberOrb(mood: .idle)
+                    .frame(width: 120, height: 120)
+                Text("Ember is for parents and adults")
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(EmberTheme.text)
+                Text("Ask a parent if you need something from the family’s apps.")
+                    .font(.body)
+                    .foregroundStyle(EmberTheme.ash)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(32)
+        }
+        .preferredColorScheme(.dark)
     }
 }
 

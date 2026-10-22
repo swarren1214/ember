@@ -36,7 +36,8 @@ final class EmberWatchRelay: NSObject {
             people: context.people.map { EmberWatchContext.Person(name: $0.name, role: $0.role.rawValue, age: $0.age()) },
             cloudHelp: EmberSettings.shared.cloudHelp?.rawValue,
             facts: context.watchFacts,
-            updatedAt: .now
+            updatedAt: .now,
+            householdOwner: { if case .member(let owner) = HearthHouseholdStore.shared.mode { owner } else { nil } }()
         )
         guard let data = EmberWire.encode(watchContext) else { return }
         try? session.updateApplicationContext([EmberWire.context: data])
@@ -44,12 +45,36 @@ final class EmberWatchRelay: NSObject {
 
     /// Runs a question from the Watch and builds the reply.
     private func answer(_ ask: EmberWatchAsk) async -> EmberWatchReply {
+        // "Yes", "no" and "undo" answer a waiting action here, as on the iPhone.
+        if let reply = EmberActions.shared.reply(in: ask.text) {
+            let spoken: String = switch reply {
+            case .yes: await EmberActions.shared.confirm()
+            case .no: EmberActions.shared.cancel()
+            case .undo: await EmberActions.shared.undo()
+            }
+            return EmberWatchReply(id: ask.id, text: spoken, actions: [], tier: .none)
+        }
         // The Watch speaks the whole reply itself, so the sentences aren't streamed to it.
         let turn = await EmberBrain.shared.ask(ask.text, client: .watch) { _ in }
+        if EmberActions.shared.hasWaiting {
+            // Double tap confirms (the primary button).
+            return EmberWatchReply(id: ask.id, text: turn.answer,
+                                   actions: [EmberWatchAction(title: "Confirm", followUp: "yes"), EmberWatchAction(title: "Cancel", followUp: "no")],
+                                   tier: turn.tier)
+        }
+        let calls = turn.cards.filter { if case .call = $0.kind { true } else { false } }
         let actions = turn.cards.compactMap { card -> EmberWatchAction? in
-            guard case .handoff(let title, _, _) = card.kind, let url = card.link,
-                  ["sms", "tel"].contains(url.scheme ?? "") else { return nil }
-            return EmberWatchAction(title: url.scheme == "tel" ? "Call" : (title == "Message" ? "Send Text" : title), url: url.absoluteString)
+            guard let url = card.link, ["sms", "tel"].contains(url.scheme ?? "") else { return nil }
+            switch card.kind {
+            case .call(let name, let detail, _):
+                // Several branches: say which one each button calls.
+                let label = calls.count > 1 ? (detail.components(separatedBy: " · ").first ?? name) : name
+                return EmberWatchAction(title: "Call \(label)", url: url.absoluteString)
+            case .handoff(let title, _, _):
+                return EmberWatchAction(title: title == "Message" ? "Send Text" : title, url: url.absoluteString)
+            default:
+                return nil
+            }
         }
         return EmberWatchReply(id: ask.id, text: turn.answer, actions: Array(actions.prefix(2)), tier: turn.tier)
     }

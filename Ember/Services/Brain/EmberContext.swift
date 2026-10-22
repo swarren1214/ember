@@ -16,6 +16,7 @@ final class EmberContext {
     private(set) var groceryBudget: HearthEnvelope<HearthGroceryBudget>?
     private(set) var reading: HearthEnvelope<HearthReading>?
     private(set) var allowance: HearthEnvelope<HearthAllowance>?
+    private(set) var foodLog: HearthEnvelope<HearthFoodLog>?
     private(set) var refreshedAt = Date.distantPast
 
     @ObservationIgnored private var observer: NSObjectProtocol?
@@ -37,6 +38,7 @@ final class EmberContext {
         groceryBudget = settings.canRead(.suffice) ? Hearth.read(HearthGroceryBudget.self, from: .suffice) : nil
         reading = settings.canRead(.hearken) ? Hearth.read(HearthReading.self, from: .hearken) : nil
         allowance = settings.canRead(.caloma) ? Hearth.read(HearthAllowance.self, from: .caloma) : nil
+        foodLog = settings.canRead(.sated) ? Hearth.read(HearthFoodLog.self, from: .sated) : nil
         refreshedAt = .now
     }
 
@@ -50,9 +52,6 @@ final class EmberContext {
     var redactionPeople: [EmberPerson] {
         people.map { EmberPerson(name: $0.name, role: $0.role.rawValue, age: $0.age()) }
     }
-
-    /// A kid is using this device: on device only, no money.
-    var isKid: Bool { me?.role == .kid }
 
     /// "Steve", or nil.
     var myFirstName: String? {
@@ -103,7 +102,7 @@ final class EmberContext {
                 guard let day = Calendar.current.date(byAdding: .day, value: offset, to: .now) else { continue }
                 for slot in ["breakfast", "lunch", "dinner"] {
                     if let meal = plan.meal(slot, on: day) {
-                        facts.append("\(EmberDays.label(day)) \(slot): \(meal.title)")
+                        facts.append("\(EmberToolbox.dayLabel(day)) \(slot): \(meal.title)")
                     }
                 }
             }
@@ -111,7 +110,7 @@ final class EmberContext {
         if let list = groceries?.value.list {
             facts.append("Grocery list: \(list.remainingCount) of \(list.itemCount) items left")
         }
-        if let budget = groceryBudget?.value, !isKid {
+        if let budget = groceryBudget?.value {
             facts.append("\(budget.name) budget: \(EmberFormat.money(cents: budget.leftCents, code: budget.currencyCode)) left of \(EmberFormat.money(cents: budget.limitCents, code: budget.currencyCode))")
         }
         if let today = reading?.value.day(.now) {
