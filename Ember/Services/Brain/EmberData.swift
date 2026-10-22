@@ -29,10 +29,16 @@ final class EmberData {
     }
 
     /// Fetches whatever changed in all three zones (in parallel). Cheap when nothing did.
+    /// Warms the mirrors ahead of a question. Called on every listen, so it looks at iCloud at
+    /// most every few minutes; a question that needs fresher data fetches for itself.
     func prefetch() {
+        if let lastPrefetch, Date.now.timeIntervalSince(lastPrefetch) < 300 { return }
+        lastPrefetch = .now
         locate()
-        Task { await refreshAll() }
+        Task(priority: .utility) { await refreshAll() }
     }
+
+    @ObservationIgnored private var lastPrefetch: Date?
 
     func refreshAll(force: Bool = false) async {
         locate()

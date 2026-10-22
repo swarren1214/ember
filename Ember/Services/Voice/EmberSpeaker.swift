@@ -23,8 +23,12 @@ final class EmberSpeaker {
     static let shared = EmberSpeaker()
 
     private(set) var isSpeaking = false
-    /// What's being said, to tell Ember's own voice apart from the person's.
+    /// What's being said, to tell Ember's own voice apart from the person's: as written (what the
+    /// recognizer tends to write back, "$86") and as spoken ("eighty-six dollars").
     private(set) var spokenText = ""
+    @ObservationIgnored private(set) var writtenText = ""
+    /// When the last piece finished playing, for the echo that trails it.
+    @ObservationIgnored private(set) var lastPlayedAt = Date.distantPast
 
     @ObservationIgnored private let synthesizer = AVSpeechSynthesizer()
     @ObservationIgnored private let converter = EmberPCMConverter(target: EmberAudio.playbackFormat)
@@ -68,6 +72,7 @@ final class EmberSpeaker {
         guard EmberAudio.shared.playVoice() else { return }
         queue.append(text)
         spokenText += (spokenText.isEmpty ? "" : " ") + text
+        writtenText += (writtenText.isEmpty ? "" : " ") + sentence
         isSpeaking = true
         produceNext()
     }
@@ -87,8 +92,15 @@ final class EmberSpeaker {
         onFinished = nil
         if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
         if EmberAudio.shared.isRunning { EmberAudio.shared.player.stop() }
+        EmberAudio.shared.player.volume = 1
         isSpeaking = false
         spokenText = ""
+        writtenText = ""
+    }
+
+    /// Ember's voice quieter while someone may be talking over it (or back to normal).
+    func duck(_ on: Bool) {
+        EmberAudio.shared.player.volume = on ? 0.3 : 1
     }
 
     // MARK: Producing audio
@@ -174,6 +186,7 @@ final class EmberSpeaker {
     private func played(generation current: Int) {
         guard current == generation else { return }
         pendingBuffers = max(pendingBuffers - 1, 0)
+        lastPlayedAt = .now
         finishIfDone()
     }
 
@@ -181,6 +194,8 @@ final class EmberSpeaker {
         guard closed, !producing, queue.isEmpty, pendingBuffers == 0 else { return }
         isSpeaking = false
         spokenText = ""
+        writtenText = ""
+        duck(false)
         let done = onFinished
         onFinished = nil
         done?()

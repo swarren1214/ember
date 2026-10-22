@@ -292,7 +292,7 @@ nonisolated struct HearthAppInfo: Sendable {
         headline: "Everything your Hearth apps know, one question away.",
         blurb: "Ember answers from your meal plan, budget, family calendar and study plan, on your iPhone or straight from your Apple Watch. It thinks on your device first, and anything that does go to the cloud carries no names and nothing that identifies you.",
         features: [
-            Feature(symbol: "waveform", title: "Just talk", detail: "Tap, or hold the Action button, and ask. Ember answers out loud in a natural voice."),
+            Feature(symbol: "waveform", title: "Just talk", detail: "Tap the orb and ask, or hold it while you speak. Ember answers out loud in a natural voice."),
             Feature(symbol: "square.stack.3d.up", title: "Knows your Hearth", detail: "Dinner, groceries, the budget, chores and the calendar, all in one answer."),
             Feature(symbol: "applewatch", title: "On your wrist", detail: "Ask from Apple Watch, with or without your iPhone nearby."),
             Feature(symbol: "lock.shield", title: "Private by design", detail: "On device first. The cloud never learns who you are."),

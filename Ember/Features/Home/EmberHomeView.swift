@@ -19,6 +19,8 @@ struct EmberHomeView: View {
     @State private var typed = ""
     @State private var showsSent = false
     @State private var compose = EmberCompose.shared
+    @State private var holdTimer: Task<Void, Never>?
+    @State private var holdStarted = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Mode: Equatable { case idle, listening, thinking, answer }
@@ -100,17 +102,42 @@ struct EmberHomeView: View {
 
     private func orbButton(in size: CGSize) -> some View {
         let frame = orbFrame(in: size)
-        return Button {
-            if mode == .answer, conversation.phase == .idle { dismissedTurn = brain.latest?.id }
-            conversation.tapOrb()
-        } label: {
-            EmberOrb(mood: orbMood, level: conversation.level, speaking: EmberSpeaker.shared.isSpeaking)
-                .frame(width: frame.diameter, height: frame.diameter)
-                .contentShape(.circle)
-        }
-        .buttonStyle(EmberPressStyle())
-        .position(frame.center)
-        .accessibilityLabel(mode == .listening ? "Done talking" : "Talk to Ember")
+        return EmberOrb(mood: orbMood, level: conversation.level, speaking: EmberSpeaker.shared.isSpeaking)
+            .frame(width: frame.diameter, height: frame.diameter)
+            .scaleEffect(conversation.isHolding ? 1.08 : 1)
+            .animation(.spring(duration: 0.35, bounce: 0.3), value: conversation.isHolding)
+            .contentShape(.circle)
+            // Tap to talk; hold to talk and let go to send (best in a noisy room).
+            .onTapGesture {
+                guard !holdStarted else { return }
+                if mode == .answer, conversation.phase == .idle { dismissedTurn = brain.latest?.id }
+                conversation.tapOrb()
+            }
+            .onLongPressGesture(minimumDuration: 0.35, maximumDistance: 80) {
+            } onPressingChanged: { pressing in
+                holdTimer?.cancel()
+                if pressing {
+                    holdTimer = Task {
+                        try? await Task.sleep(for: .milliseconds(350))
+                        guard !Task.isCancelled else { return }
+                        holdStarted = true
+                        if mode == .answer { dismissedTurn = brain.latest?.id }
+                        conversation.beginHold()
+                    }
+                } else if holdStarted {
+                    conversation.endHold()
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(100))
+                        holdStarted = false
+                    }
+                }
+            }
+            .sensoryFeedback(.impact(weight: .medium), trigger: conversation.isHolding)
+            .position(frame.center)
+            .accessibilityElement()
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { conversation.tapOrb() }
+            .accessibilityLabel(mode == .listening ? "Done talking" : "Talk to Ember")
         .accessibilityHint(mode == .listening ? "Sends what you said" : "Ember listens and answers out loud")
     }
 
@@ -208,7 +235,7 @@ struct EmberHomeView: View {
         .padding(.horizontal, 20)
         .readableWidth()
         .overlay(alignment: .bottom) {
-            bottomBar(hint: "Tap to talk · Hold the Action button anywhere", trailing: nil)
+            bottomBar(hint: "Tap the orb to talk · Or hold it while you speak", trailing: nil)
                 .padding(.bottom, 24)
         }
     }
@@ -260,7 +287,17 @@ struct EmberHomeView: View {
                 .padding(.horizontal, 28)
                 .accessibilityLabel(conversation.transcript.isEmpty ? "Listening" : conversation.transcript)
             Spacer()
-            Text("Tap the orb when you’re done")
+            if let pending = conversation.pendingSend {
+                EmberSendingBar(text: pending) { conversation.tapOrb() }
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 12)
+                    .transition(.opacity.combined(with: .offset(y: 10)))
+            } else if conversation.isNoisyRoom, !conversation.isHolding {
+                EmberNoisyHint()
+                    .padding(.bottom, 10)
+                    .transition(.opacity)
+            }
+            Text(conversation.isHolding ? "Let go to send" : "Tap the orb when you’re done")
                 .font(.footnote)
                 .foregroundStyle(EmberTheme.smoke)
             Button {
@@ -353,7 +390,7 @@ struct EmberHomeView: View {
         .overlay(alignment: .bottom) {
             VStack(spacing: 14) {
                 followUps
-                bottomBar(hint: "Tap to ask a follow-up", trailing: {
+                bottomBar(hint: "Tap the orb to ask a follow-up", trailing: {
                     dismissedTurn = brain.latest?.id
                 })
             }
@@ -550,5 +587,49 @@ struct EmberSentSheet: View {
                 ToolbarItem(placement: .confirmationAction) { SheetDoneButton { dismiss() } }
             }
         }
+    }
+}
+
+/// A turn about to be sent in a noisy room: what was heard, a short countdown, and Stop.
+struct EmberSendingBar: View {
+    let text: String
+    let stop: () -> Void
+    @State private var progress = 0.0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Sending…")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(EmberTheme.ash)
+                Spacer()
+                Button("Stop", action: stop)
+                    .font(.subheadline.weight(.semibold))
+                    .buttonStyle(.glass)
+                    .tint(.primary)
+            }
+            ProgressView(value: progress)
+                .tint(EmberTheme.accent)
+        }
+        .padding(14)
+        .emberGlass(cornerRadius: 20)
+        .onAppear {
+            withAnimation(.linear(duration: 1.2)) { progress = 1 }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Sending “\(text)”")
+        .accessibilityAction(named: "Stop", stop)
+    }
+}
+
+/// Other voices keep reaching the microphone: holding the orb works better here.
+struct EmberNoisyHint: View {
+    var body: some View {
+        Label("Noisy room · Hold the orb while you talk", systemImage: "waveform.badge.exclamationmark")
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(EmberTheme.text)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.white.opacity(0.08), in: .capsule)
     }
 }

@@ -52,6 +52,11 @@ enum EmberRouter {
             return Decision(domains: Set(scores.keys), isComplex: complex)
         }
         guard onDevice else { return Decision(domains: Set(EmberDomain.allCases), isComplex: complex) }
+        // A few words with no area in them ("thanks", "what time is it") are small talk: no
+        // second model call to classify them.
+        if question.split(whereSeparator: \.isWhitespace).count < 4 {
+            return Decision(domains: [.general], isComplex: false)
+        }
         do {
             let session = LanguageModelSession(instructions: """
             Classify a request to a family's assistant into the area it's about. The areas:

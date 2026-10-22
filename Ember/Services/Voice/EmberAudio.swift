@@ -37,6 +37,7 @@ nonisolated enum EmberAudioSession {
                         try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP, .duckOthers])
                         try session.setPrefersEchoCancelledInput(true)
                         try session.setActive(true, options: .notifyOthersOnDeactivation)
+                        aimMicrophoneForward(session)
                         continuation.resume(returning: session.isEchoCancelledInputEnabled)
                     } else {
                         try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers])
@@ -47,6 +48,23 @@ nonisolated enum EmberAudioSession {
                     continuation.resume(throwing: error)
                 }
             }
+        }
+    }
+
+    /// On the iPhone's own microphones, listens with the front one in a cardioid pattern: it hears
+    /// the person facing the screen and turns down voices behind and beside the phone. Headsets
+    /// and microphones without a front pattern are left alone.
+    private static func aimMicrophoneForward(_ session: AVAudioSession) {
+        guard let builtIn = session.availableInputs?.first(where: { $0.portType == .builtInMic }),
+              session.currentRoute.inputs.contains(where: { $0.portType == .builtInMic }),
+              let front = builtIn.dataSources?.first(where: { $0.orientation == .front }),
+              front.supportedPolarPatterns?.contains(.cardioid) == true else { return }
+        do {
+            try front.setPreferredPolarPattern(.cardioid)
+            try builtIn.setPreferredDataSource(front)
+            try session.setPreferredInput(builtIn)
+        } catch {
+            Logger(subsystem: "com.stephenwarren.ember", category: "audio").notice("Couldn't aim the microphone: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -130,14 +148,38 @@ nonisolated final class EmberPCMConverter: @unchecked Sendable {
     }
 }
 
-/// Feeds microphone audio to the speech analyzer (converted to its format) and reports how
-/// loud it is, on the audio thread.
+/// Feeds microphone audio to the speech analyzer (converted to its format) and keeps a short
+/// loudness history on the analyzer's own timeline, on the audio thread.
+///
+/// The history is how Ember tells the person holding the phone from the rest of the room: speech
+/// from a foot away is far louder than the room's background (the TV, other people talking
+/// across the room). Each recognized phrase comes with its time range, so Ember can ask how far
+/// above the background it was (`loudness(from:to:)`) and drop what came from across the room.
 nonisolated final class EmberMicrophoneFeed: @unchecked Sendable {
     private let continuation: AsyncStream<AnalyzerInput>.Continuation
     private let converter: EmberPCMConverter
     private let onLevel: @Sendable (Double) -> Void
     private let muted = OSAllocatedUnfairLock(initialState: false)
     private let lastLevel = OSAllocatedUnfairLock(initialState: Date.distantPast)
+
+    /// One buffer's loudness, placed on the analyzer's timeline.
+    struct Slice {
+        var start: Double
+        var end: Double
+        /// dBFS.
+        var db: Double
+        /// The room's background then, dBFS.
+        var floor: Double
+    }
+
+    private struct History {
+        /// Seconds of audio given to the analyzer so far (its timeline).
+        var time: Double = 0
+        var floor: Double = -60
+        var slices: [Slice] = []
+    }
+
+    private let history = OSAllocatedUnfairLock(initialState: History())
 
     init(continuation: AsyncStream<AnalyzerInput>.Continuation, converter: EmberPCMConverter, onLevel: @escaping @Sendable (Double) -> Void) {
         self.continuation = continuation
@@ -151,30 +193,65 @@ nonisolated final class EmberMicrophoneFeed: @unchecked Sendable {
 
     func handle(_ buffer: AVAudioPCMBuffer) {
         guard !muted.withLock({ $0 }) else { return }
-        reportLevel(buffer)
-        if let converted = converter.convert(buffer) {
-            continuation.yield(AnalyzerInput(buffer: converted))
+        let db = Self.dbfs(buffer)
+        reportLevel(db)
+        guard let converted = converter.convert(buffer) else { return }
+        let seconds = Double(converted.frameLength) / converted.format.sampleRate
+        history.withLock { state in
+            // The background: drops quickly to quiet moments, rises slowly through speech. It
+            // starts no louder than a quiet room, so speech in the first moment isn't taken
+            // for the background.
+            if state.slices.isEmpty { state.floor = min(db, -45) }
+            state.floor = db < state.floor ? max(db, state.floor - 3) : min(state.floor + 0.04, db)
+            state.slices.append(Slice(start: state.time, end: state.time + seconds, db: db, floor: state.floor))
+            state.time += seconds
+            // Keep the last 60 seconds.
+            if state.slices.count > 3000 { state.slices.removeFirst(state.slices.count - 3000) }
         }
+        continuation.yield(AnalyzerInput(buffer: converted))
     }
 
     func finish() {
         continuation.finish()
     }
 
-    /// About 20 times a second: the buffer's loudness, 0...1.
-    private func reportLevel(_ buffer: AVAudioPCMBuffer) {
+    /// How far above the room's background the loudest part of a stretch was, in dB, and the
+    /// loudest level itself. Nil when the stretch is older than the history.
+    func loudness(from start: Double, to end: Double) -> (aboveFloor: Double, peak: Double)? {
+        history.withLock { state in
+            let inRange = state.slices.filter { $0.end > start && $0.start < end }
+            guard !inRange.isEmpty else { return nil }
+            // The 90th percentile, so a single click doesn't count as speech.
+            let above = inRange.map { $0.db - $0.floor }.sorted()
+            let peaks = inRange.map(\.db).sorted()
+            let index = min(above.count - 1, Int(Double(above.count) * 0.9))
+            return (above[index], peaks[index])
+        }
+    }
+
+    /// The room's background now, dBFS.
+    var floor: Double { history.withLock { $0.floor } }
+
+    private static func dbfs(_ buffer: AVAudioPCMBuffer) -> Double {
+        guard let samples = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return -100 }
+        let count = Int(buffer.frameLength)
+        var sum: Float = 0
+        for index in 0..<count { sum += samples[index] * samples[index] }
+        let rms = Double((sum / Float(count)).squareRoot())
+        return 20 * log10(max(rms, 0.00001))
+    }
+
+    /// About 20 times a second, for the orb: 0...1.
+    private func reportLevel(_ db: Double) {
         let now = Date.now
         let due = lastLevel.withLock { last -> Bool in
             guard now.timeIntervalSince(last) > 0.05 else { return false }
             last = now
             return true
         }
-        guard due, let samples = buffer.floatChannelData?[0] else { return }
-        let count = Int(buffer.frameLength)
-        guard count > 0 else { return }
-        var sum: Float = 0
-        for index in 0..<count { sum += samples[index] * samples[index] }
-        onLevel(min(Double(sqrt(sum / Float(count))) * 12, 1))
+        guard due else { return }
+        // -50 dBFS (quiet room) to -10 dBFS (close, loud speech).
+        onLevel(min(max((db + 50) / 40, 0), 1))
     }
 }
 

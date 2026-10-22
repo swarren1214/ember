@@ -99,6 +99,11 @@ final class WeightLoader {
       }
     }
 
+    // Ember: compute every weight now. Left lazy, the transposes above run on whatever device is
+    // the default when the model is first used, which can be the GPU after the app has gone to
+    // the background, and iOS ends an app that sends GPU work from the background.
+    MLX.eval(Array(sanitizedWeights.values))
+
     return sanitizedWeights
   }
 

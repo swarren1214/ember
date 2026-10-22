@@ -41,6 +41,19 @@ final class EmberZone {
 
     /// The household changed hands (joined or left a family): the mirror starts over.
     func setHouseholdOwner(_ owner: String?) {
+        // Still reading the saved mirror: decide once it's read, so a saved owner isn't mistaken
+        // for a change.
+        if let pending = loading {
+            loading = Task { [weak self] in
+                await pending.value
+                self?.applyOwner(owner)
+            }
+            return
+        }
+        applyOwner(owner)
+    }
+
+    private func applyOwner(_ owner: String?) {
         guard owner != householdOwnerName else { return }
         forget()
         householdOwnerName = owner
@@ -50,10 +63,35 @@ final class EmberZone {
     private var fetching: Task<Void, Never>?
     private let log = Logger(subsystem: "com.stephenwarren.ember", category: "zone")
 
+    /// The fields Ember reads and writes in this zone. Fetching only these leaves out Suffice's
+    /// receipt images and Caloma's photos, which made a first fetch slow and the mirror large.
+    let desiredKeys: [CKRecord.FieldKey]?
+    /// Reading the saved mirror happens off the main thread; fetching waits for it.
+    private var loading: Task<Void, Never>?
+
     init(zoneName: String) {
         self.zoneName = zoneName
-        load()
+        self.desiredKeys = Self.fields[zoneName]
+        let url = Self.fileURL(for: zoneName)
+        loading = Task { [weak self] in
+            let saved = await Task.detached(priority: .userInitiated) { Self.read(url) }.value
+            self?.adopt(saved)
+        }
     }
+
+    static let fields: [String: [CKRecord.FieldKey]] = [
+        "Budget": ["name", "limitCents", "parentID", "startMonth", "repeatsMonthly", "isArchived", "sortOrder", "createdAt",
+                   "date", "payee", "amountCents", "kindRaw", "categoryID", "memberID", "billID", "billDueDate", "splitsJSON",
+                   "stashCents", "placeName", "note", "isReviewed", "taxTagRaw", "receiptLink", "receiptSourceRaw",
+                   "isVariable", "dueDay", "frequencyRaw", "interval", "startDate", "endDate", "isAutopay", "isActive", "payeeKey"],
+        "Caloma": ["name", "roleRaw", "isArchived", "symbol", "showInKidView", "createdAt", "title", "points", "assigneeIDsRaw",
+                   "rotates", "upForGrabs", "repeatRaw", "weekdayMask", "startDate", "requiresApproval", "sortOrder", "priorityRaw",
+                   "rotationModeRaw", "rotationPeriodRaw", "rotationWeekday", "rotationAnchor", "rotationAdjustRaw", "rotationSlot",
+                   "choreID", "memberID", "day", "date", "statusRaw", "completedAt", "reviewedAt", "location", "notes", "note",
+                   "start", "end", "isAllDay", "attendeeIDsRaw", "driverID", "repeatEnd", "bringRaw", "skippedDaysRaw",
+                   "alertMinutes", "countsDown", "kindRaw", "refID"],
+        "Kitchen": ["content", "updatedAt"],
+    ]
 
     private var container: CKContainer { CKContainer(identifier: Self.containerID) }
 
@@ -76,6 +114,10 @@ final class EmberZone {
     /// Brings the mirror up to date. Concurrent callers share one fetch. Errors are kept in
     /// `lastError`; what was mirrored before stays usable.
     func refresh(force: Bool = false) async {
+        while let pending = loading {
+            await pending.value
+            if loading == pending { loading = nil }
+        }
         if !force, isFresh { return }
         if let fetching { return await fetching.value }
         let task = Task { await self.fetchChanges() }
@@ -86,10 +128,12 @@ final class EmberZone {
 
     private func fetchChanges() async {
         let (database, zoneID) = location
+        var changed = false
         do {
             var more = true
             while more {
-                let changes = try await database.recordZoneChanges(inZoneWith: zoneID, since: token)
+                let changes = try await database.recordZoneChanges(inZoneWith: zoneID, since: token, desiredKeys: desiredKeys)
+                if !changes.modificationResultsByID.isEmpty || !changes.deletions.isEmpty { changed = true }
                 for (id, result) in changes.modificationResultsByID {
                     if case .success(let modification) = result {
                         records[id.recordName] = modification.record
@@ -103,7 +147,8 @@ final class EmberZone {
             }
             lastFetched = .now
             lastError = nil
-            save()
+            // Nothing new: the file already has it (the token moving on alone isn't worth a write).
+            if changed { save() }
         } catch let error as CKError where error.code == .changeTokenExpired {
             log.notice("\(self.zoneName, privacy: .public): token expired, fetching everything")
             forget()
@@ -157,36 +202,66 @@ final class EmberZone {
 
     // MARK: The file
 
-    private var fileURL: URL {
+    nonisolated private static func fileURL(for zoneName: String) -> URL {
         let folder = URL.applicationSupportDirectory.appending(path: "Zones", directoryHint: .isDirectory)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return folder.appending(path: "\(zoneName).zone")
     }
 
+    private var fileURL: URL { Self.fileURL(for: zoneName) }
+
     private func forget() {
         records = [:]
         token = nil
         lastFetched = nil
+        writing?.cancel()
         try? FileManager.default.removeItem(at: fileURL)
     }
 
+    private var writing: Task<Void, Never>?
+
+    /// Writes the mirror off the main thread (archiving thousands of records took long enough to
+    /// stall the orb). Records in the mirror are never changed in place (edits copy them), so the
+    /// snapshot can be read on another thread.
     private func save() {
-        let archiver = NSKeyedArchiver(requiringSecureCoding: true)
-        archiver.encode(Array(records.values) as NSArray, forKey: "records")
-        if let token { archiver.encode(token, forKey: "token") }
-        archiver.encode(householdOwnerName, forKey: "owner")
-        archiver.finishEncoding()
-        try? archiver.encodedData.write(to: fileURL, options: [.atomic, .completeFileProtection])
+        let snapshot = Array(records.values)
+        let token = token
+        let owner = householdOwnerName, url = fileURL, previous = writing
+        writing = Task.detached(priority: .utility) {
+            await previous?.value
+            if Task.isCancelled { return }
+            let archiver = NSKeyedArchiver(requiringSecureCoding: true)
+            archiver.encode(snapshot as NSArray, forKey: "records")
+            if let token { archiver.encode(token, forKey: "token") }
+            archiver.encode(owner, forKey: "owner")
+            archiver.finishEncoding()
+            if Task.isCancelled { return }
+            try? archiver.encodedData.write(to: url, options: [.atomic, .completeFileProtection])
+        }
     }
 
-    private func load() {
-        guard let data = try? Data(contentsOf: fileURL),
-              let unarchiver = try? NSKeyedUnarchiver(forReadingFrom: data) else { return }
+    nonisolated struct Saved: @unchecked Sendable {
+        var records: [CKRecord]
+        var token: CKServerChangeToken?
+        var owner: String?
+    }
+
+    nonisolated private static func read(_ url: URL) -> Saved? {
+        guard let data = try? Data(contentsOf: url),
+              let unarchiver = try? NSKeyedUnarchiver(forReadingFrom: data) else { return nil }
         unarchiver.requiresSecureCoding = true
-        let saved = unarchiver.decodeObject(of: [NSArray.self, CKRecord.self], forKey: "records") as? [CKRecord] ?? []
-        token = unarchiver.decodeObject(of: CKServerChangeToken.self, forKey: "token")
-        householdOwnerName = unarchiver.decodeObject(of: NSString.self, forKey: "owner") as String?
-        records = Dictionary(saved.map { ($0.recordID.recordName, $0) }, uniquingKeysWith: { _, new in new })
+        let records = unarchiver.decodeObject(of: [NSArray.self, CKRecord.self], forKey: "records") as? [CKRecord] ?? []
+        let token = unarchiver.decodeObject(of: CKServerChangeToken.self, forKey: "token")
+        let owner = unarchiver.decodeObject(of: NSString.self, forKey: "owner") as String?
+        return Saved(records: records, token: token, owner: owner)
+    }
+
+    private func adopt(_ saved: Saved?) {
+        // Something already fetched, or the household changed while the file was being read.
+        guard let saved, records.isEmpty, token == nil, saved.owner == householdOwnerName || householdOwnerName == nil else { return }
+        token = saved.token
+        householdOwnerName = saved.owner
+        records = Dictionary(saved.records.map { ($0.recordID.recordName, $0) }, uniquingKeysWith: { _, new in new })
     }
 }
 

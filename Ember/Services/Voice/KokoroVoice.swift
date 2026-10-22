@@ -467,9 +467,12 @@ nonisolated final class KokoroSynth: @unchecked Sendable {
         MLX.GPU.set(cacheLimit: Self.gpuCacheLimit)
         // If loading crashes the app, the flag is still set next launch and natural voices turn off.
         KokoroModel.markLoading(true)
-        // Reloading after a memory warning can happen with the screen locked: keep it off the GPU then.
+        // Always built on the CPU: anything the model leaves to compute later is then CPU work,
+        // which is allowed in the background. Built on the GPU, that leftover work could run as
+        // GPU work after the screen locks, and iOS ends the app (the crash in KokoroTTS's first
+        // verse after locking). The weights themselves are computed at load (WeightLoader).
         let make = { KokoroTTS(modelPath: url, g2p: .misaki) }
-        let loaded = GPUGate.shared.run(make) ?? Device.withDefaultDevice(.cpu, make)
+        let loaded = Device.withDefaultDevice(.cpu, make)
         KokoroModel.markLoading(false)
         tts = loaded
         return loaded
@@ -573,8 +576,9 @@ nonisolated final class GPUGate: @unchecked Sendable {
 
     private func close() {
         state.withLock { isOpen = false }
-        // Let a chunk already on the GPU finish (a fraction of a second) before the app moves on.
-        if inFlight.lock(before: Date(timeIntervalSinceNow: 2)) { inFlight.unlock() }
+        // Let a chunk already on the GPU finish before the app moves on: iOS waits for this
+        // (we're on the main thread, in will-resign-active), and nothing new starts on the GPU.
+        if inFlight.lock(before: Date(timeIntervalSinceNow: 3)) { inFlight.unlock() }
     }
 
     /// Runs `body` with the GPU allowed, or returns nil when the app isn't active.
