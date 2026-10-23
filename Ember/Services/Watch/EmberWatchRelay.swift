@@ -40,10 +40,19 @@ final class EmberWatchRelay: NSObject {
             cloudHelp: EmberSettings.shared.cloudHelp?.rawValue,
             facts: context.watchFacts,
             updatedAt: .now,
-            householdOwner: { if case .member(let owner) = HearthHouseholdStore.shared.mode { owner } else { nil } }()
+            householdOwner: { if case .member(let owner) = HearthHouseholdStore.shared.mode { owner } else { nil } }(),
+            cloudVoice: Self.cloudVoice(for: EmberSettings.shared.voiceID)
         )
         guard let data = EmberWire.encode(watchContext) else { return }
         try? session.updateApplicationContext([EmberWire.context: data])
+    }
+
+    /// The Watch's cloud voice closest to the Kokoro voice chosen on the iPhone: Kokoro's ids
+    /// start with the accent and gender ("af_heart" is an American woman, "bm_george" a British
+    /// man).
+    static func cloudVoice(for kokoroID: String) -> String {
+        let male = kokoroID.dropFirst().first == "m"
+        return male ? "Puck" : "Aoede"
     }
 
     /// Runs a question from the Watch and builds the reply.

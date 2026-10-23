@@ -327,15 +327,18 @@ nonisolated struct EmberOrbEngine: Sendable {
     }
 }
 
-/// The orb drawn cheaply: three soft blobs turning at different speeds and a breathing core.
-/// Every motion is a repeating SwiftUI animation, which the system runs without redrawing the
-/// view (no per-frame work in the app). Used on Apple Watch.
+#if os(watchOS)
+/// The orb drawn cheaply, for Apple Watch: three soft blobs turning at different speeds and a
+/// breathing core, with no blur. Every frame is worked out from the clock (nothing is kept between
+/// frames and no animation is left running), so it can't stall or freeze after the screen dims
+/// and wakes; it simply picks up where the clock is. Thirty frames a second, paused while the
+/// screen is dimmed (Always On).
 struct EmberOrbLite: View {
     var mood: EmberOrbMood
     var speaking: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var turning = false
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
 
     private var glow: Double {
         switch mood {
@@ -349,29 +352,32 @@ struct EmberOrbLite: View {
     var body: some View {
         GeometryReader { proxy in
             let side = min(proxy.size.width, proxy.size.height)
-            ZStack {
-                // Halo.
-                Circle()
-                    .fill(RadialGradient(colors: [Self.rgb(1, 0.44, 0.16, 0.45 * glow), Self.rgb(1, 0.31, 0.12, 0.12 * glow), .clear],
-                                         center: .center, startRadius: 0, endRadius: side * 1.05))
-                    .frame(width: side * 2.1, height: side * 2.1)
-                blob(side * 1.05, focus: UnitPoint(x: 0.34, y: 0.34),
-                     colors: [Self.rgb(1, 0.835, 0.573, 0.85), Self.rgb(1, 0.478, 0.184, 0.7), Self.rgb(1, 0.275, 0.098, 0.15), .clear])
-                    .rotationEffect(.degrees(turning ? 360 : 0))
-                blob(side, focus: UnitPoint(x: 0.64, y: 0.64),
-                     colors: [Self.rgb(1, 0.29, 0.18, 0.7), Self.rgb(0.84, 0.157, 0.275, 0.3), .clear])
-                    .rotationEffect(.degrees(turning ? -360 : 0))
-                // Core: breathes, faster while thinking.
-                EmberOrbCore(side: side, period: mood == .thinking ? 0.9 : 2.4, still: reduceMotion)
-                    .id(mood)
+            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: isLuminanceReduced || reduceMotion)) { timeline in
+                let t = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 3600)
+                let period = mood == .thinking ? 1.0 : 2.6
+                let breath = sin(t * 2 * .pi / period)
+                ZStack {
+                    // Halo.
+                    Circle()
+                        .fill(RadialGradient(colors: [Self.rgb(1, 0.44, 0.16, 0.45 * glow), Self.rgb(1, 0.31, 0.12, 0.12 * glow), .clear],
+                                             center: .center, startRadius: 0, endRadius: side * 1.05))
+                        .frame(width: side * 2.1, height: side * 2.1)
+                    blob(side * 1.05, focus: UnitPoint(x: 0.34, y: 0.34),
+                         colors: [Self.rgb(1, 0.835, 0.573, 0.85), Self.rgb(1, 0.478, 0.184, 0.7), Self.rgb(1, 0.275, 0.098, 0.15), .clear])
+                        .rotationEffect(.radians(t * 2 * .pi / 9))
+                    blob(side, focus: UnitPoint(x: 0.64, y: 0.64),
+                         colors: [Self.rgb(1, 0.29, 0.18, 0.7), Self.rgb(0.84, 0.157, 0.275, 0.3), .clear])
+                        .rotationEffect(.radians(-t * 2 * .pi / 13 + 1.7))
+                    // Core: breathes, faster while thinking.
+                    Circle()
+                        .fill(RadialGradient(colors: [Self.rgb(1, 0.98, 0.94, 0.95), Self.rgb(1, 0.84, 0.63, 0.45), .clear],
+                                             center: .center, startRadius: 0, endRadius: side * 0.32))
+                        .frame(width: side * 0.64, height: side * 0.64)
+                        .scaleEffect(1 + 0.08 * breath)
+                }
+                .frame(width: side, height: side)
+                .blendMode(.plusLighter)
             }
-            .frame(width: side, height: side)
-            .blendMode(.plusLighter)
-            .compositingGroup()
-        }
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.linear(duration: 9).repeatForever(autoreverses: false)) { turning = true }
         }
     }
 
@@ -385,27 +391,7 @@ struct EmberOrbLite: View {
         Color(.sRGB, red: red, green: green, blue: blue, opacity: alpha)
     }
 }
-
-/// The orb's bright core, breathing at its own pace (a new one starts when the mood changes).
-private struct EmberOrbCore: View {
-    let side: CGFloat
-    let period: Double
-    let still: Bool
-    @State private var expanded = false
-
-    var body: some View {
-        Circle()
-            .fill(RadialGradient(colors: [Color(.sRGB, red: 1, green: 0.98, blue: 0.94, opacity: 0.95),
-                                          Color(.sRGB, red: 1, green: 0.84, blue: 0.63, opacity: 0.45), .clear],
-                                 center: .center, startRadius: 0, endRadius: side * 0.32))
-            .frame(width: side * 0.64, height: side * 0.64)
-            .scaleEffect(expanded ? 1.1 : 0.92)
-            .onAppear {
-                guard !still else { return }
-                withAnimation(.easeInOut(duration: period).repeatForever()) { expanded = true }
-            }
-    }
-}
+#endif
 
 #Preview {
     VStack(spacing: 80) {

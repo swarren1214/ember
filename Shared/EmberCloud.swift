@@ -190,6 +190,24 @@ nonisolated struct EmberCloudClient: Sendable {
         }
     }
 
+    /// One sentence spoken by the cloud voice (POST /v1/ember/speak): MP3 bytes. For Apple
+    /// Watch, which can't run Kokoro. The text may carry household first names (the person chose
+    /// this); anything else identifying is refused on the device and again by the server.
+    func speak(_ text: String, voice: String, rate: Double = 1, accessToken: String) async throws -> Data {
+        guard EmberRedactor.leaks(in: text).isEmpty else { throw EmberCloudError.refused }
+        var urlRequest = URLRequest(url: baseURL.appending(path: "v1/ember/speak"), timeoutInterval: 8)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue("audio/mpeg", forHTTPHeaderField: "Accept")
+        urlRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        var body: [String: Any] = ["text": String(text.prefix(600)), "voice": voice]
+        if rate != 1 { body["rate"] = min(max(rate, 0.8), 1.25) }
+        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await session.data(for: urlRequest)
+        guard (response as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty else { throw EmberCloudError.failed }
+        return data
+    }
+
     private nonisolated struct TextEvent: Decodable { var text: String }
     private nonisolated struct ToolEvent: Decodable { var id: String; var name: String; var input: [String: EmberJSON] }
     private nonisolated struct DoneEvent: Decodable { var stopReason: String? }

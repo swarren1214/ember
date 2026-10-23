@@ -40,6 +40,7 @@ struct WatchRootView: View {
     // MARK: Face
 
     private var face: some View {
+        ScrollView {
         VStack(spacing: 8) {
             // Tapping the orb opens dictation; what's said is sent when it closes.
             TextFieldLink(prompt: Text("Ask Ember")) {
@@ -62,9 +63,14 @@ struct WatchRootView: View {
                     .padding(.vertical, 5)
                     .background(.white.opacity(0.08), in: .capsule)
             }
-            // Only when asking from the Watch alone is possible (Cloud Help with Claude) and the
-            // iPhone has stayed out of reach (see WatchModel.reachabilityChanged).
-            if !model.isIPhoneReachable, !signedIn, model.context?.allowsClaude == true {
+            // Signing in lets the Watch answer by itself (faster, and without the iPhone), when
+            // Cloud Help with Claude is on.
+            if !signedIn, model.context?.allowsClaude == true {
+                Text("Sign in to ask without your iPhone")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 4)
                 SignInWithAppleButton(.signIn) { request in
                     nonce = WatchAccount.prepare(request)
                 } onCompletion: { result in
@@ -79,6 +85,9 @@ struct WatchRootView: View {
                 .frame(height: 40)
             }
         }
+        .frame(maxWidth: .infinity)
+        }
+        .scrollIndicators(.hidden)
         .transition(.opacity.combined(with: .scale(scale: 0.96)))
     }
 

@@ -30,7 +30,7 @@ final class EmberSettings {
             switch self {
             case .off: "Everything stays on your iPhone. Ember can’t answer from Apple Watch without your iPhone nearby."
             case .apple: "Harder questions go to Apple’s Private Cloud Compute, which keeps nothing."
-            case .appleAndClaude: "The hardest questions can go to Claude, with names replaced and nothing that identifies you."
+            case .appleAndClaude: "The hardest questions can go to Claude, with names replaced and nothing that identifies you. On Apple Watch, answers are spoken by a cloud voice, which hears first names but keeps nothing."
             }
         }
 

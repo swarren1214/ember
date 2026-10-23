@@ -52,21 +52,45 @@ final class WatchModel: NSObject {
         }
     }
 
-    /// What was dictated.
+    /// What was dictated. The Watch answers by itself first (Cloud Help with Claude, signed in
+    /// on the Watch): straight to hearth-api over Wi-Fi or cellular, reading the family's data
+    /// from iCloud itself, spoken by the cloud voice as it's written. The iPhone answers when the
+    /// Watch can't (no connection, not signed in, Cloud Help off) and it's in reach.
     func ask(_ text: String) {
         let question = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty else { return }
         speaker.stop()
+        speaker.cloudVoice = context?.cloudVoice ?? "Aoede"
         phase = .thinking(question)
+        let context = context
         Task {
-            let reply: EmberWatchReply
-            if WCSession.default.isReachable, let tethered = await askIPhone(question, within: 20) {
-                reply = tethered
-            } else {
-                reply = await WatchBrain.shared.ask(question, context: context)
+            var reply: EmberWatchReply?
+            if await WatchBrain.shared.canAnswer(context: context) {
+                speaker.begin()
+                let id = UUID()
+                var spoken = ""
+                let result = await WatchBrain.shared.ask(question, context: context) { sentence in
+                    self.speaker.say(sentence)
+                    // Show the answer as it's spoken.
+                    spoken = spoken.isEmpty ? sentence : spoken + " " + sentence
+                    self.phase = .answer(EmberWatchReply(id: id, text: spoken, actions: [], tier: .claude))
+                }
+                if result.answered {
+                    reply = EmberWatchReply(id: id, text: result.reply.text, actions: result.reply.actions, tier: result.reply.tier)
+                } else if !WCSession.default.isReachable {
+                    reply = result.reply
+                    speaker.speak(result.reply.text)
+                }
             }
-            phase = .answer(reply)
-            speaker.speak(reply.text)
+            if reply == nil {
+                if WCSession.default.isReachable, let tethered = await askIPhone(question, within: 20) {
+                    reply = tethered
+                } else {
+                    reply = await WatchBrain.shared.ask(question, context: context).reply
+                }
+                if let reply { speaker.speak(reply.text) }
+            }
+            if let reply { phase = .answer(reply) }
         }
     }
 

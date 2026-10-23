@@ -20,13 +20,22 @@ final class WatchBrain {
     private let family = EmberZone(zoneName: CalomaFamily.zoneName)
     private let kitchen = EmberZone(zoneName: BigTableGroceries.zoneName)
 
-    func ask(_ question: String, context: EmberWatchContext?) async -> EmberWatchReply {
+    /// Whether the Watch can answer by itself: Cloud Help with Claude is on and it's signed in.
+    func canAnswer(context: EmberWatchContext?) async -> Bool {
+        guard let context, context.allowsClaude else { return false }
+        return await WatchAccount.shared.isSignedIn
+    }
+
+    /// Answers on the Watch, calling `onSentence` with each sentence as it's written (for the
+    /// voice). `answered` is false when it couldn't (offline, signed out, Cloud Help off), so the
+    /// iPhone can be asked instead.
+    func ask(_ question: String, context: EmberWatchContext?, onSentence: @escaping (String) -> Void = { _ in }) async -> (reply: EmberWatchReply, answered: Bool) {
         let id = UUID()
         guard let context, context.allowsClaude else {
-            return EmberWatchReply(id: id, text: "Ember needs your iPhone nearby for that. To ask from your Watch alone, turn on Cloud Help with Claude on your iPhone.", actions: [], tier: .none)
+            return (EmberWatchReply(id: id, text: "Ember needs your iPhone nearby for that. To ask from your Watch alone, turn on Cloud Help with Claude on your iPhone.", actions: [], tier: .none), false)
         }
         guard await WatchAccount.shared.isSignedIn else {
-            return EmberWatchReply(id: id, text: "Sign in on your Watch once to ask without your iPhone. Open Ember on your Watch and tap Sign In.", actions: [], tier: .none)
+            return (EmberWatchReply(id: id, text: "Sign in on your Watch once to ask without your iPhone. Open Ember on your Watch and tap Sign In.", actions: [], tier: .none), false)
         }
         for zone in [budget, family, kitchen] { zone.setHouseholdOwner(context.householdOwner) }
 
@@ -35,6 +44,7 @@ final class WatchBrain {
         var messages = Array(history.suffix(8))
         messages.append(EmberCloudMessage(role: "user", content: [.text(redactor.redact(question))]))
         var answer = ""
+        var splitter = EmberSentenceSplitter()
         var actions: [EmberWatchAction] = []
         let tools = Self.tools
 
@@ -60,7 +70,9 @@ final class WatchBrain {
                 var toolUses: [(String, String, [String: EmberJSON])] = []
                 for try await event in EmberCloudClient(baseURL: EmberEndpoints.apiBaseURL).turn(request, accessToken: token) {
                     switch event {
-                    case .text(let delta): text += delta
+                    case .text(let delta):
+                        text += delta
+                        for sentence in splitter.feed(delta) { onSentence(redactor.restore(sentence).replacingOccurrences(of: "**", with: "")) }
                     case .toolUse(let useID, let name, let input): toolUses.append((useID, name, input))
                     case .done: break
                     }
@@ -78,15 +90,16 @@ final class WatchBrain {
                 messages.append(EmberCloudMessage(role: "assistant", content: blocks))
                 messages.append(EmberCloudMessage(role: "user", content: results))
             }
+            if let rest = splitter.flush() { onSentence(redactor.restore(rest).replacingOccurrences(of: "**", with: "")) }
             let restored = redactor.restore(answer).trimmingCharacters(in: .whitespacesAndNewlines)
             history.append(EmberCloudMessage(role: "user", content: [.text(redactor.redact(question))]))
             history.append(EmberCloudMessage(role: "assistant", content: [.text(answer)]))
-            return EmberWatchReply(id: id, text: restored.isEmpty ? "Done." : restored, actions: Array(actions.prefix(2)), tier: .claude)
+            return (EmberWatchReply(id: id, text: restored.isEmpty ? "Done." : restored, actions: Array(actions.prefix(2)), tier: .claude), true)
         } catch WatchAccount.AccountError.signedOut {
-            return EmberWatchReply(id: id, text: "Your Watch’s sign-in expired. Open Ember on your Watch and sign in again.", actions: [], tier: .none)
+            return (EmberWatchReply(id: id, text: "Your Watch’s sign-in expired. Open Ember on your Watch and sign in again.", actions: [], tier: .none), false)
         } catch {
             let message = (error as? EmberCloudError)?.errorDescription ?? EmberCloudError.offline.errorDescription!
-            return EmberWatchReply(id: id, text: message, actions: [], tier: .none)
+            return (EmberWatchReply(id: id, text: message, actions: [], tier: .none), false)
         }
     }
 
@@ -177,7 +190,7 @@ final class WatchBrain {
         switch await EmberCallFinder.find(who, near: near, which: which) {
         case .success(.one(let target)):
             if let url = target.url { actions.append(EmberWatchAction(title: "Call \(target.name)", url: url.absoluteString)) }
-            return "Found \(target.spoken). A Call button is on the Watch; they tap it to dial. Say it's ready in a few words. Don't say a number."
+            return "Found \(target.spoken). A Call button is on the Watch. Reply with exactly this and nothing else: \"Ready to call \(target.name). Tap Call.\""
         case .success(.several(let targets)):
             actions = []
             for target in targets.prefix(2) {
@@ -187,6 +200,10 @@ final class WatchBrain {
             return "There are \(targets.count) matches, closest first:\n\(list)\nThe two closest have Call buttons on the Watch. Ask which one in one short question, naming each by its street."
         case .failure(.needsLocation):
             return "Ember needs Location on the Watch to find \(who) nearby. Ask them to say the town."
+        case .failure(.needsContacts):
+            return "Ember isn't allowed to see Contacts on the Watch. Reply in one short sentence that you need Contacts access to call \(who)."
+        case .failure(.notInContacts):
+            return "Nobody in Contacts is \(who). Reply in one short sentence that you couldn't find \(who) in Contacts."
         case .failure(.nothingFound):
             return "No phone number for \(who) in Contacts or Apple Maps."
         }

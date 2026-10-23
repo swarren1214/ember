@@ -90,6 +90,8 @@ nonisolated struct EmberWatchContext: Codable, Sendable {
     /// Who owns the household when this person joined someone else's (their iCloud zones are
     /// shared from that owner); nil when it's theirs.
     var householdOwner: String? = nil
+    /// The cloud voice for the Watch (a Chirp 3: HD name, "Aoede"), matched to the iPhone's.
+    var cloudVoice: String? = nil
 
     var allowsClaude: Bool { cloudHelp == "appleAndClaude" }
 }

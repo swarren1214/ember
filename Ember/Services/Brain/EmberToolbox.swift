@@ -789,7 +789,7 @@ final class EmberToolbox {
         case .success(.one(let target)):
             cards.append(EmberCard(app: nil, kind: .call(name: target.name, detail: target.detail, logo: target.logo),
                                    link: target.url, actionTitle: "Call", opensWhenSpoken: true))
-            return "Found \(target.spoken). The call screen opens as soon as you finish speaking, and they tap Call to dial. Say you're calling them, in a few words. Don't say a number or a full address."
+            return "Found \(target.spoken). The phone's call screen opens as soon as you finish speaking. Reply with exactly this and nothing else: \"Calling \(Self.callName(who: who, target: target)).\""
         case .success(.several(let targets)):
             for target in targets {
                 cards.append(EmberCard(app: nil, kind: .call(name: target.name, detail: target.detail, logo: target.logo),
@@ -805,9 +805,22 @@ final class EmberToolbox {
             """
         case .failure(.needsLocation):
             return "Ember needs Location to find \(who) nearby. Ask them to say the town, or allow Location for Ember in Settings."
+        case .failure(.needsContacts):
+            return "Ember isn't allowed to see Contacts. Reply in one short sentence that you need Contacts access to call \(who), which they can allow in Settings › Ember."
+        case .failure(.notInContacts):
+            return "Nobody in Contacts is \(who): no contact with that name or nickname, and no related name on their own card. Reply in one or two short sentences: you couldn't find \(who) in Contacts, and adding \(who) as a related name on their own contact card (or giving the contact the nickname \(who)) fixes it."
         case .failure(.nothingFound):
             return "No phone number for \(who)\(near.isEmpty ? "" : " in \(near)") in Contacts or Apple Maps."
         }
+    }
+
+    /// How Ember says who it's calling: as they said it for family ("Calling Mom", "Calling your
+    /// wife"), the name otherwise.
+    static func callName(who: String, target: EmberCallTarget) -> String {
+        guard EmberContactSearch.isRelation(who) else { return target.name }
+        let trimmed = who.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.lowercased().hasPrefix("my ") { return "your " + trimmed.dropFirst(3) }
+        return trimmed.prefix(1).uppercased() + trimmed.dropFirst()
     }
 
     private func compose(_ kind: EmberComposeRequest.Kind, to who: String, subject: String, body: String) async -> String {
@@ -827,7 +840,7 @@ final class EmberToolbox {
             let title = kind == .message ? "Text \(person.name)" : "Email \(person.name)"
             cards.append(EmberCard(app: nil, kind: .handoff(title: title, detail: kind == .message ? "“\(body)”" : subject,
                                                             symbol: kind == .message ? "message" : "envelope")))
-            return "The \(kind == .message ? "message" : "email") to \(person.name) opens ready to send when you finish speaking; they tap Send. Say it's ready in a few words. Don't read it back word for word."
+            return "The \(kind == .message ? "message" : "email") to \(person.name) opens ready to send as soon as you finish speaking. Reply with exactly this and nothing else: \"Your \(kind == .message ? "text" : "email") to \(person.name) is ready to send.\""
         }
     }
 

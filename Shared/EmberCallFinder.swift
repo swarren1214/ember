@@ -55,6 +55,10 @@ nonisolated enum EmberCallFinder {
     enum Miss: Error, Sendable {
         case nothingFound
         case needsLocation
+        /// A person ("Mom", "my wife") and Contacts isn't allowed.
+        case needsContacts
+        /// A person ("Mom") who isn't in Contacts: never looked up on the map.
+        case notInContacts
     }
 
     /// `who`: a person or a business. `near`: a town they named, or empty. `which`: their answer
@@ -64,7 +68,12 @@ nonisolated enum EmberCallFinder {
         let near = near.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !who.isEmpty else { return .failure(.nothingFound) }
         // A town means a place; otherwise people they know come first.
-        if near.isEmpty, which.isEmpty, let person = await contact(named: who) { return .success(.one(person)) }
+        if near.isEmpty, which.isEmpty {
+            let allowed = await EmberContactSearch.hasAccess()
+            if allowed, let person = await contact(named: who) { return .success(.one(person)) }
+            // "Mom" or "my wife" is someone they know, never a business on the map.
+            if EmberContactSearch.isRelation(who) { return .failure(allowed ? .notInContacts : .needsContacts) }
+        }
         let here = await currentLocation()
         return await places(who, near: near, which: which, here: here)
     }
@@ -72,20 +81,10 @@ nonisolated enum EmberCallFinder {
     // MARK: Contacts
 
     private static func contact(named name: String) async -> EmberCallTarget? {
-        switch CNContactStore.authorizationStatus(for: .contacts) {
-        case .notDetermined:
-            guard (try? await CNContactStore().requestAccess(for: .contacts)) == true else { return nil }
-        case .authorized, .limited:
-            break
-        default:
-            return nil
-        }
-        return await Task.detached(priority: .userInitiated) { () -> EmberCallTarget? in
-            let store = CNContactStore()
+        await Task.detached(priority: .userInitiated) { () -> EmberCallTarget? in
             let keys = [CNContactGivenNameKey, CNContactFamilyNameKey, CNContactOrganizationNameKey,
                         CNContactNicknameKey, CNContactPhoneNumbersKey] as [CNKeyDescriptor]
-            let found = (try? store.unifiedContacts(matching: CNContact.predicateForContacts(matchingName: name), keysToFetch: keys)) ?? []
-            for contact in found {
+            for contact in EmberContactSearch.contacts(matching: name, keys: keys) {
                 // Mobile first, then iPhone, main, anything.
                 let order = [CNLabelPhoneNumberMobile, CNLabelPhoneNumberiPhone, CNLabelPhoneNumberMain]
                 let numbers = contact.phoneNumbers.sorted { a, b in

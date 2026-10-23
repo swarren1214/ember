@@ -36,25 +36,12 @@ nonisolated enum EmberContacts {
     static func find(_ name: String, needs: KeyPath<EmberContact, [String]>) async -> Lookup {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return .none }
-        switch CNContactStore.authorizationStatus(for: .contacts) {
-        case .notDetermined:
-            guard (try? await CNContactStore().requestAccess(for: .contacts)) == true else { return .denied }
-        case .authorized, .limited: break
-        default: return .denied
-        }
+        guard await EmberContactSearch.hasAccess() else { return .denied }
         let matches = await Task.detached(priority: .userInitiated) { () -> [EmberContact] in
-            let store = CNContactStore()
             let keys = [CNContactGivenNameKey, CNContactFamilyNameKey, CNContactNicknameKey, CNContactOrganizationNameKey,
                         CNContactPhoneNumbersKey, CNContactEmailAddressesKey, CNContactIdentifierKey] as [CNKeyDescriptor]
-            var found = (try? store.unifiedContacts(matching: CNContact.predicateForContacts(matchingName: name), keysToFetch: keys)) ?? []
-            if found.isEmpty {
-                // "Mom", "Grandpa": nicknames aren't searched by name.
-                let request = CNContactFetchRequest(keysToFetch: keys)
-                let key = name.lowercased()
-                try? store.enumerateContacts(with: request) { contact, _ in
-                    if contact.nickname.lowercased() == key { found.append(contact) }
-                }
-            }
+            // By name, nickname ("Mom") or relationship on their card ("mother: Jane").
+            let found = EmberContactSearch.contacts(matching: name, keys: keys)
             return found.map { contact in
                 let order = [CNLabelPhoneNumberMobile, CNLabelPhoneNumberiPhone, CNLabelPhoneNumberMain]
                 let phones = contact.phoneNumbers.sorted {
