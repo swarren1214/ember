@@ -66,6 +66,7 @@ final class WatchModel: NSObject {
         }
         speaker.stop()
         phase = .listening
+        WatchBrain.shared.prewarm(context: context)
         Task {
             switch await listener.listen() {
             case .heard(let pcm):
@@ -80,9 +81,13 @@ final class WatchModel: NSObject {
                     } else {
                         ask(text)
                     }
+                } catch EmberCloudError.serverNotReady {
+                    phase = .failed("Listening on the Watch needs the latest Ember server. Until it’s updated, use your iPhone.")
+                } catch EmberCloudError.rateLimited {
+                    phase = .failed(EmberCloudError.rateLimited.errorDescription ?? "")
                 } catch {
                     log.notice("Transcription failed: \(String(describing: error), privacy: .public)")
-                    phase = .failed("I couldn’t hear that just now. Check your connection and try again.")
+                    phase = .failed("I couldn’t reach Ember’s server to hear that. Check your connection and try again.")
                 }
             case .silence:
                 phase = .face

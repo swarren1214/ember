@@ -32,6 +32,23 @@ final class WatchBrain {
     private let family = EmberZone(zoneName: CalomaFamily.zoneName)
     private let kitchen = EmberZone(zoneName: BigTableGroceries.zoneName)
 
+    /// Gets everything a question might need while the person is still talking: the family's
+    /// data from iCloud (only what changed), and where they are. Answers then start right after
+    /// Ember understands the question instead of waiting on iCloud (that wait was 5–10 seconds).
+    func prewarm(context: EmberWatchContext?) {
+        guard let context else { return }
+        for zone in [budget, family, kitchen] { zone.setHouseholdOwner(context.householdOwner) }
+        let zones = [budget, family, kitchen]
+        Task {
+            await withTaskGroup(of: Void.self) { group in
+                for zone in zones { group.addTask { await zone.refresh() } }
+            }
+            // Parse the budget now too, so the answer doesn't.
+            _ = await budget.snapshot(SufficeLedger.init(records:))
+        }
+        EmberCallFinder.warmUp()
+    }
+
     /// Whether the Watch can answer by itself: Cloud Help with Claude is on and it's signed in.
     func canAnswer(context: EmberWatchContext?) async -> Bool {
         guard let context, context.allowsClaude else { return false }

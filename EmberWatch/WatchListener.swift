@@ -32,7 +32,7 @@ final class WatchListener {
     /// Speech is louder than this (0…1, the same scale as the iPhone's meter).
     private let speechLevel = 0.08
     /// Quiet this long after speech ends the question.
-    private let pause: TimeInterval = 1.2
+    private let pause: TimeInterval = 1.0
     /// Nothing said in this long: give up.
     private let patience: TimeInterval = 6
     /// The longest question.
@@ -80,13 +80,28 @@ final class WatchListener {
     }
 
     /// Done talking: use what was said so far.
-    func finish() { end(capture.heardSpeech ? .heard(capture.pcm) : .silence) }
+    func finish() { end(capture.heardSpeech ? .heard(trimmed(quietAfter: 0)) : .silence) }
+
+    /// When speech started (seconds into the recording), and how much quiet came after it.
+    private var speechStart: TimeInterval?
+
+    /// The recording without the silence before and after the words: less to upload, which on
+    /// the Watch is most of the wait. A little margin is kept on both sides.
+    private func trimmed(quietAfter: TimeInterval) -> Data {
+        let pcm = capture.pcm
+        let bytesPerSecond = Int(Self.sampleRate) * 2
+        let start = max(0, Int(((speechStart ?? 0) - 0.4) * Double(bytesPerSecond)) & ~1)
+        let cut = max(0, Int((quietAfter - 0.3) * Double(bytesPerSecond)) & ~1)
+        let end = max(start, pcm.count - cut)
+        return pcm.subdata(in: start..<end)
+    }
 
     func cancel() { end(.cancelled) }
 
     /// Ten times a second: the orb follows the voice, and the end of speech ends the question.
     private func watch() async {
         let started = Date.now
+        speechStart = nil
         var lastLoud: Date?
         while !Task.isCancelled, continuation != nil {
             try? await Task.sleep(for: .milliseconds(100))
@@ -94,11 +109,12 @@ final class WatchListener {
             EmberLevelMeter.shared.value = level
             let now = Date.now
             if level > speechLevel {
+                if lastLoud == nil { speechStart = now.timeIntervalSince(started) }
                 lastLoud = now
                 capture.heardSpeech = true
             }
             if let lastLoud, now.timeIntervalSince(lastLoud) > pause {
-                end(.heard(capture.pcm))
+                end(.heard(trimmed(quietAfter: now.timeIntervalSince(lastLoud))))
                 return
             }
             if lastLoud == nil, now.timeIntervalSince(started) > patience {
@@ -106,7 +122,7 @@ final class WatchListener {
                 return
             }
             if now.timeIntervalSince(started) > longest {
-                end(capture.heardSpeech ? .heard(capture.pcm) : .silence)
+                end(capture.heardSpeech ? .heard(trimmed(quietAfter: 0)) : .silence)
                 return
             }
         }

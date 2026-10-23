@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Contacts
 import CoreLocation
 import MapKit
@@ -295,8 +296,25 @@ nonisolated enum EmberCallFinder {
         return a.contains(b) || b.contains(a)
     }
 
-    /// Where the person is, for "nearest". Asks once; gives up after a few seconds.
+    /// The last place found, for a few minutes: asking again costs seconds on the Watch.
+    private static let recent = OSAllocatedUnfairLock<(location: CLLocation, at: Date)?>(initialState: nil)
+
+    /// Finds the person's location ahead of a question (the Watch does this while you talk), so
+    /// a call or a search doesn't wait for it.
+    static func warmUp() {
+        Task.detached(priority: .utility) { _ = await currentLocation() }
+    }
+
+    /// Where the person is, for "nearest": a place found in the last five minutes, else asks
+    /// once and gives up after a few seconds.
     private static func currentLocation() async -> CLLocation? {
+        if let cached = recent.withLock({ $0 }), Date.now.timeIntervalSince(cached.at) < 300 { return cached.location }
+        let found = await locate()
+        if let found { recent.withLock { $0 = (found, .now) } }
+        return found
+    }
+
+    private static func locate() async -> CLLocation? {
         let session = CLServiceSession(authorization: .whenInUse)
         defer { session.invalidate() }
         return await withTaskGroup(of: CLLocation?.self) { group in

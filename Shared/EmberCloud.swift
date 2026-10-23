@@ -123,6 +123,8 @@ nonisolated enum EmberCloudError: LocalizedError, Sendable {
     case rateLimited
     case refused
     case failed
+    /// hearth-api doesn't have this yet (an older deployment) or isn't set up for it.
+    case serverNotReady
 
     var errorDescription: String? {
         switch self {
@@ -132,6 +134,7 @@ nonisolated enum EmberCloudError: LocalizedError, Sendable {
         case .rateLimited: "Ember’s had a lot of questions today. Try again in a little while."
         case .refused: "Ember kept that private and didn’t send it."
         case .failed: "Ember couldn’t answer just now. Try again in a moment."
+        case .serverNotReady: "Ember’s server isn’t set up for that yet."
         }
     }
 }
@@ -261,6 +264,7 @@ nonisolated struct EmberCloudClient: Sendable {
         case 200:
             struct Reply: Decodable { var text: String }
             return try JSONDecoder().decode(Reply.self, from: data).text
+        case 404, 503: throw EmberCloudError.serverNotReady
         case 429: throw EmberCloudError.rateLimited
         case 401: throw URLError(.userAuthenticationRequired)
         default: throw EmberCloudError.failed

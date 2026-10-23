@@ -190,17 +190,29 @@ struct WatchRootView: View {
                 ForEach(reply.actions) { action in
                     if let url = action.url.flatMap(URL.init(string:)) {
                         Link(destination: url) {
-                            Text(action.title).frame(maxWidth: .infinity)
+                            Text(action.title)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                                .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
+                        .frame(maxWidth: .infinity)
                         .tint(url.scheme == "tel" ? .green : Color(red: 0.93, green: 0.35, blue: 0.11))
                     } else if let followUp = action.followUp {
-                        Button(action.title) { model.ask(followUp) }
+                        Button { model.ask(followUp) } label: {
+                            Text(action.title).frame(maxWidth: .infinity)
+                        }
+                        .frame(maxWidth: .infinity)
                     }
                 }
-                Button("Done") { model.dismiss() }
-                    .buttonStyle(.bordered)
+                Button { model.dismiss() } label: {
+                    Text("Done").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .frame(maxWidth: .infinity)
             }
+            // The full width of the screen, so the buttons sit in its middle.
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .transition(.opacity.combined(with: .offset(y: 12)))
     }
