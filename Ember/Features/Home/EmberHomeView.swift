@@ -107,10 +107,25 @@ struct EmberHomeView: View {
 
     private var welcome: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Ember itself: tap to talk.
+            Button {
+                composerFocused = false
+                conversation.presentVoice()
+            } label: {
+                EmberOrb(mode: .idle, size: 148)
+                    .padding(28)
+                    .contentShape(.circle)
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
+            .padding(.top, 8)
+            .accessibilityLabel("Talk to Ember")
+            .accessibilityHint("Starts listening.")
+
             Text(Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day()))
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(EmberTheme.ash)
-                .padding(.top, 20)
+                .padding(.top, 4)
                 .padding(.horizontal, 4)
             Text(greeting)
                 .font(.largeTitle.bold())
@@ -218,7 +233,7 @@ struct EmberHomeView: View {
                     EmberQuestionBubble(text: conversation.question)
                     if conversation.liveAnswer.isEmpty {
                         HStack(spacing: 12) {
-                            FiveEmbers(size: 28)
+                            EmberOrb(mode: .thinking, size: 30)
                             Text("Thinking…")
                                 .font(.subheadline)
                                 .foregroundStyle(EmberTheme.ash)
@@ -279,10 +294,11 @@ struct EmberHomeView: View {
                         composerFocused = false
                         conversation.presentVoice()
                     } label: {
-                        HearthMicRing(size: Self.composerHeight)
+                        EmberOrb(mode: .idle, size: Self.buttonSize)
                             .contentShape(.circle)
                     }
                     .buttonStyle(.plain)
+                    .padding(.bottom, (Self.composerHeight - Self.buttonSize) / 2)
                     .accessibilityLabel("Talk to Ember")
                     .transition(.scale.combined(with: .opacity))
                 } else {

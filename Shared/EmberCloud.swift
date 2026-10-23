@@ -208,6 +208,38 @@ nonisolated struct EmberCloudClient: Sendable {
         return data
     }
 
+    /// What a question asks for (POST /v1/ember/understand): the intent and words copied from
+    /// it, filled in by Claude. `question` must already be de-identified (household names as
+    /// tokens); the reply's words come back with the same tokens.
+    func understand(_ question: String, previous: (question: String, intent: EmberIntent)?, accessToken: String,
+                    timeout: TimeInterval = 2.5) async throws -> EmberRequest {
+        let texts = [question, previous?.question ?? ""].joined(separator: "\n")
+        guard EmberRedactor.leaks(in: texts).isEmpty else { throw EmberCloudError.refused }
+        var urlRequest = URLRequest(url: baseURL.appending(path: "v1/ember/understand"), timeoutInterval: timeout)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        var body: [String: Any] = [
+            "question": String(question.prefix(600)),
+            "now": Date.now.formatted(date: .complete, time: .shortened),
+            "timeZone": TimeZone.current.identifier,
+        ]
+        if let previous {
+            body["previous"] = ["question": String(previous.question.prefix(600)), "intent": previous.intent.rawValue]
+        }
+        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await session.data(for: urlRequest)
+        switch (response as? HTTPURLResponse)?.statusCode {
+        case 200: return try JSONDecoder().decode(UnderstandReply.self, from: data).request
+        case 422: throw EmberCloudError.refused
+        case 429: throw EmberCloudError.rateLimited
+        case 401: throw URLError(.userAuthenticationRequired)
+        default: throw EmberCloudError.failed
+        }
+    }
+
+    private nonisolated struct UnderstandReply: Decodable { var request: EmberRequest }
+
     private nonisolated struct TextEvent: Decodable { var text: String }
     private nonisolated struct ToolEvent: Decodable { var id: String; var name: String; var input: [String: EmberJSON] }
     private nonisolated struct DoneEvent: Decodable { var stopReason: String? }

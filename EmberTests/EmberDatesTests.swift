@@ -64,6 +64,29 @@ struct EmberDatesTests {
         #expect(range("this weekend", lean: .future) == EmberRange(start: day(10, 24), end: day(10, 26)))
     }
 
+    @Test func specificDaysHoweverTheyreSaid() {
+        let tenth = EmberRange(start: day(10, 10), end: day(10, 11))
+        for phrase in ["October 10", "October 10th", "Oct 10", "Oct. 10", "on October 10th", "October 10, 2026",
+                       "October 10th 2026", "Saturday, October 10", "Saturday October 10th, 2026", "the 10th of October",
+                       "10th October", "Saturday the 10th", "October tenth", "2026-10-10", "10/10"] {
+            #expect(range(phrase) == tenth, "\(phrase)")
+            #expect(EmberDates.reads(phrase, now: Self.now, calendar: Self.calendar), "\(phrase)")
+        }
+        #expect(range("October 10, 2025") == EmberRange(start: day(10, 10, 2025), end: day(10, 11, 2025)))
+        #expect(!EmberDates.reads("whenever", now: Self.now, calendar: Self.calendar))
+    }
+
+    @Test func periodsFoundInTheQuestion() {
+        func found(_ q: String) -> EmberRange? {
+            EmberDates.phrase(in: q, now: Self.now, calendar: Self.calendar).map { range($0) }
+        }
+        #expect(found("How much money did we spend last week?") == EmberRange(start: day(10, 11), end: day(10, 18)))
+        #expect(found("How much did we spend on October 10?") == EmberRange(start: day(10, 10), end: day(10, 11)))
+        #expect(found("What did we buy on Saturday, October 10th?") == EmberRange(start: day(10, 10), end: day(10, 11)))
+        #expect(found("What did we spend yesterday at Costco") == EmberRange(start: day(10, 21), end: day(10, 22)))
+        #expect(EmberDates.phrase(in: "Can we afford a $10 coffee?", now: Self.now, calendar: Self.calendar) == nil)
+    }
+
     @Test func unknownFallsBack() {
         #expect(EmberDates.range("whenever", fallback: "this week", now: Self.now, calendar: Self.calendar) == EmberRange(start: day(10, 18), end: day(10, 25)))
     }

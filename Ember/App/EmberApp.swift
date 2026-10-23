@@ -92,7 +92,7 @@ struct EmberAdultsOnlyView: View {
         ZStack {
             EmberTheme.coal.ignoresSafeArea()
             VStack(spacing: 18) {
-                FiveEmbers(size: 90)
+                EmberOrb(mode: .idle, size: 120)
                 Text("Ember is for parents and adults")
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(EmberTheme.text)

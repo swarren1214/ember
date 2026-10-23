@@ -64,6 +64,17 @@ final class EmberToolbox {
     /// Ember asked "which one?" this turn (calls, texts, contacts): listen for the answer.
     private(set) var asksToChoose = false
 
+    /// What was asked this turn, for the period when the model leaves it out or garbles it.
+    private var question = ""
+
+    /// The period a tool should use: the model's, when it reads as a date; otherwise the one
+    /// said in the question ("last week", "October 10"); otherwise the tool's default. The small
+    /// model often leaves the range empty, which turned "last week" into this week.
+    private func when(_ argument: String) -> String {
+        if !argument.isEmpty, EmberDates.reads(argument) { return argument }
+        return EmberDates.phrase(in: question) ?? argument
+    }
+
     func beginTurn() {
         cards = []
         usedApps = []
@@ -88,6 +99,7 @@ final class EmberToolbox {
     /// (remember, forget, open an app) are offered only when the question asks for them: offered
     /// every turn, the small model reached for "open Hearken" when asked for restaurants.
     func tools(for domains: Set<EmberDomain>, question: String? = nil) -> [EmberToolSpec] {
+        if let question { self.question = question }
         let text = (question ?? "").lowercased()
         return all.filter { spec in
             guard spec.app.map({ EmberSettings.shared.canRead($0) }) ?? true else { return false }
@@ -143,7 +155,7 @@ final class EmberToolbox {
                             .text("person", "Whose spending, or empty for everyone.", optional: true),
                           ], app: .suffice) { [unowned self] args in
                 await money { ledger in
-                    EmberSkills.spending(ledger, range: args.text("range"), budget: args.text("budget"), place: args.text("place"), person: args.text("person"))
+                    EmberSkills.spending(ledger, range: self.when(args.text("range")), budget: args.text("budget"), place: args.text("place"), person: args.text("person"))
                 }
             },
             EmberToolSpec(name: "budgets", description: "How the month's budgets stand: left, spent and planned, for all budgets or one, with days left in the month.",
@@ -151,12 +163,12 @@ final class EmberToolbox {
                             .text("budget", "A budget name, or empty for all of them.", optional: true),
                             .text("month", "Which month, like \"this month\" or \"September\". Default this month.", optional: true),
                           ], app: .suffice) { [unowned self] args in
-                await money { ledger in EmberSkills.budgets(ledger, budget: args.text("budget"), month: args.text("month")) }
+                await money { ledger in EmberSkills.budgets(ledger, budget: args.text("budget"), month: self.when(args.text("month"))) }
             },
             EmberToolSpec(name: "bills", description: "Bills coming due and any that are late, with amounts and whether each is paid.",
                           domains: [.money], params: [.text("range", "When: \"this week\", \"next 30 days\". Default the next 14 days.", optional: true)],
                           app: .suffice) { [unowned self] args in
-                await money { ledger in EmberSkills.bills(ledger, range: args.text("range")) }
+                await money { ledger in EmberSkills.bills(ledger, range: self.when(args.text("range"))) }
             },
             EmberToolSpec(name: "purchases", description: "The individual purchases in a period, newest first, optionally at one place or in one budget. Use when they ask what they bought or spent it on.",
                           domains: [.money], params: [
@@ -164,7 +176,7 @@ final class EmberToolbox {
                             .text("place", "A store or place, or empty.", optional: true),
                             .text("budget", "A budget name, or empty.", optional: true),
                           ], app: .suffice) { [unowned self] args in
-                await money { ledger in EmberSkills.recent(ledger, range: args.text("range"), place: args.text("place"), budget: args.text("budget")) }
+                await money { ledger in EmberSkills.recent(ledger, range: self.when(args.text("range")), place: args.text("place"), budget: args.text("budget")) }
             },
             EmberToolSpec(name: "log_spending", description: "Logs a purchase in Suffice. It waits for them to confirm before anything changes.",
                           domains: [.money], params: [
@@ -284,7 +296,7 @@ final class EmberToolbox {
             EmberToolSpec(name: "place_call", description: "Calls a person from Contacts or a business from Apple Maps near them (a named town means the nearest town by that name). One match: the call screen opens and they tap Call. Several: it lists them so you can ask which.",
                           domains: [.phone], params: [
                             .text("who", "Who to call: a person or a business, as they said it."),
-                            .text("near", "The town or area they named, or empty.", optional: true),
+                            .text("near", "Only a town they said out loud for a business (\"the Costco in Orem\"). Empty for people and when they named no town.", optional: true),
                             .text("which", "Only after you asked which of several: their answer, like a street or \"the closest\". Otherwise empty.", optional: true),
                           ]) { [unowned self] args in
                 await placeCall(who: args.text("who"), near: args.text("near"), which: args.text("which"))
@@ -807,6 +819,7 @@ final class EmberToolbox {
     // MARK: Places
 
     func findPlaces(_ query: String, near: String) async -> String {
+        let near = EmberRequest.appears(near, in: question) ? near : ""
         switch await EmberCallFinder.search(query, near: near) {
         case .success(let places):
             for place in places.prefix(4) {
@@ -833,6 +846,8 @@ final class EmberToolbox {
     // MARK: Phone
 
     func placeCall(who: String, near: String, which: String) async -> String {
+        // A town only counts if they said it: the model sometimes fills in where they are.
+        let near = EmberRequest.appears(near, in: question) ? near : ""
         switch await EmberCallFinder.find(who, near: near, which: which) {
         case .success(.one(let target)):
             cards.append(EmberCard(app: nil, kind: .call(name: target.name, detail: target.detail, logo: target.logo),
@@ -855,6 +870,8 @@ final class EmberToolbox {
             return "Ember needs Location to find \(who) nearby. Ask them to say the town, or allow Location for Ember in Settings."
         case .failure(.needsContacts):
             return "Ember isn't allowed to see Contacts. Reply in one short sentence that you need Contacts access to call \(who), which they can allow in Settings › Ember."
+        case .failure(.notInContacts) where EmberContactSearch.isLimited && !EmberContactSearch.isRelation(who):
+            return "Ember can only see the contacts they chose to share, and \(who) isn't one of them. Reply in one or two short sentences: they can share \(who), or all contacts, in Settings › Apps › Ember › Contacts."
         case .failure(.notInContacts):
             return "Nobody in Contacts is \(who): no contact with that name or nickname, and no related name on their own card. Reply in one or two short sentences: you couldn't find \(who) in Contacts, and adding \(who) as a related name on their own contact card (or giving the contact the nickname \(who)) fixes it."
         case .failure(.nothingFound):
@@ -971,6 +988,12 @@ final class EmberToolbox {
     }
 
     // MARK: Helpers
+
+    /// A card for an answer worked out outside the tools (the money pipeline).
+    func present(_ answer: EmberAnswer, app: HearthApp, link: URL?, action: String) {
+        use(app)
+        show(answer, app: app, link: link, action: action)
+    }
 
     private func show(_ answer: EmberAnswer, app: HearthApp?, link: URL?, action: String) {
         guard !answer.title.isEmpty else { return }

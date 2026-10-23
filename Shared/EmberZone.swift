@@ -182,6 +182,21 @@ final class EmberZone {
         }
     }
 
+    /// Throws the mirror away and fetches the whole zone again (Profile › iCloud Data).
+    func refetchEverything() async {
+        while let pending = loading {
+            await pending.value
+            if loading == pending { loading = nil }
+        }
+        forget()
+        await refresh(force: true)
+    }
+
+    /// Where this mirror reads from, for Profile › iCloud Data.
+    var whereLabel: String {
+        householdOwnerName == nil ? "Your iCloud" : "Shared with you"
+    }
+
     // MARK: Saving
 
     /// A new record in this zone, named as the app names them.

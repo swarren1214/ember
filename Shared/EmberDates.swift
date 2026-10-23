@@ -189,9 +189,17 @@ nonisolated enum EmberDates {
         if let weekday = weekdays.firstIndex(of: bare) {
             return weekdayRange(weekday + 1, lean: lean, strict: false, now: now, calendar: calendar)
         }
-        // "september", "september 2025"
-        if let month = monthIndex(bare.split(separator: " ").first.map(String.init) ?? "") {
-            let rest = bare.split(separator: " ").dropFirst()
+        // "september", "september 2025", "october 10", "saturday october 10th 2026", "the 10th of october"
+        let dated = calendarWords(bare)
+        if let month = monthIndex(dated.split(separator: " ").first.map(String.init) ?? "") {
+            let rest = dated.split(separator: " ").dropFirst().map(String.init)
+            if rest.count == 2, let dayNumber = ordinal(rest[0]), (1...31).contains(dayNumber), let year = Int(rest[1]), year > 1900 {
+                var parts = DateComponents(year: year, month: month, day: dayNumber)
+                parts.calendar = calendar
+                if let start = calendar.date(from: parts), let end = calendar.date(byAdding: .day, value: 1, to: start) {
+                    return EmberRange(start: start, end: end)
+                }
+            }
             if rest.isEmpty {
                 return monthRange(month, lean: lean, strict: false, now: now, calendar: calendar)
             }
@@ -209,8 +217,8 @@ nonisolated enum EmberDates {
                 }
             }
         }
-        // "the 5th"
-        if let start = dayOfMonth(text, now: now, calendar: calendar) {
+        // "the 5th", "saturday the 5th"
+        if let start = dayOfMonth(text, now: now, calendar: calendar) ?? dayOfMonth(dated, now: now, calendar: calendar) {
             return EmberRange(start: start, end: calendar.date(byAdding: .day, value: 1, to: start)!)
         }
         // "2026-10-05", "10/5"
@@ -219,6 +227,57 @@ nonisolated enum EmberDates {
             return EmberRange(start: start, end: calendar.date(byAdding: .day, value: 1, to: start)!)
         }
         return nil
+    }
+
+    /// A date as people say it, put in one order: "Saturday, October 10th" → "october 10th",
+    /// "the 10th of October 2026" → "october 10th 2026", "Oct. 10" → "oct 10". A weekday said
+    /// alongside a date only names it; the date decides.
+    private static func calendarWords(_ text: String) -> String {
+        var words = text.replacingOccurrences(of: ".", with: " ")
+            .split(separator: " ").map(String.init)
+            .filter { $0 != "of" && $0 != "on" }
+        if words.count > 1 { words.removeAll { weekdays.contains($0) } }
+        if let index = words.firstIndex(where: { monthIndex($0) != nil }) {
+            words.removeAll { $0 == "the" }
+            let at = words.firstIndex(where: { monthIndex($0) != nil }) ?? index
+            if at > 0 {
+                let month = words.remove(at: at)
+                words.insert(month, at: 0)
+            }
+        }
+        return words.joined(separator: " ")
+    }
+
+    /// The period said somewhere in a question: "how much did we spend last week?" → "last week",
+    /// "what did we buy on Saturday, October 10th?" → "saturday october 10th". Longest phrase
+    /// first; only phrases with a date word in them, so "$10" or "a coffee" never count.
+    static func phrase(in question: String, now: Date = .now, calendar: Calendar = .current) -> String? {
+        let words = normalize(question).replacingOccurrences(of: "?", with: " ").split(separator: " ").map(String.init)
+        guard !words.isEmpty else { return nil }
+        let dateWords: Set<String> = Set(months + shortMonths + weekdays).union([
+            "today", "tonight", "yesterday", "tomorrow", "week", "weekend", "month", "year", "days", "day", "weeks",
+            "months", "ytd", "since"])
+        func hasDateWord(_ window: ArraySlice<String>) -> Bool {
+            window.contains { word in
+                dateWords.contains(word) || monthIndex(word.replacingOccurrences(of: ".", with: "")) != nil
+                    || word.contains("/") || (word.split(separator: "-").count == 3 && word.first?.isNumber == true)
+            }
+        }
+        for length in stride(from: min(6, words.count), through: 1, by: -1) {
+            for start in 0...(words.count - length) {
+                let window = words[start..<(start + length)]
+                guard hasDateWord(window) else { continue }
+                let text = window.joined(separator: " ")
+                if parse(text, lean: .past, now: now, calendar: calendar) != nil { return text }
+            }
+        }
+        return nil
+    }
+
+    /// Whether a phrase reads as a date at all (so a tool can say when it fell back).
+    static func reads(_ spoken: String, lean: Lean = .past, now: Date = .now, calendar: Calendar = .current) -> Bool {
+        let text = normalize(spoken)
+        return text.isEmpty || parse(text, lean: lean, now: now, calendar: calendar) != nil
     }
 
     private static func weekend(offset: Int, now: Date, calendar: Calendar) -> EmberRange? {

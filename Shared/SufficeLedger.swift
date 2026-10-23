@@ -213,35 +213,17 @@ nonisolated struct SufficeLedger: Sendable {
         return stem.count >= 4 ? live.first { Self.fold($0.name).hasPrefix(stem) } : nil
     }
 
-    func isActive(_ category: SufficeCategory, in month: EmberRange, calendar: Calendar = .current) -> Bool {
-        guard !category.isArchived else { return false }
-        let starts = calendar.dateInterval(of: .month, for: category.startMonth)?.start ?? category.startMonth
-        if category.startMonth > .distantPast, starts > month.start { return false }
-        if !category.repeatsMonthly, category.startMonth > .distantPast, starts != month.start { return false }
-        return true
-    }
-
-    /// The month's budgets, each with its subcategories, as Suffice shows them.
+    /// The month's budgets, each with its subcategories, as Suffice shows them (HearthMoney's
+    /// math, the same code Suffice runs).
     func statuses(in month: EmberRange) -> [SufficeBudgetStatus] {
-        var spent: [UUID?: Int] = [:]
-        for entry in entries where !entry.isIncome && month.contains(entry.date) {
-            for part in entry.spendingParts { spent[part.categoryID, default: 0] += part.amountCents }
+        let byID = Dictionary(categories.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        func convert(_ status: HearthMoney.Status) -> SufficeBudgetStatus? {
+            guard let category = byID[status.category.id] else { return nil }
+            return SufficeBudgetStatus(category: category, spentCents: status.spentCents, limitCents: status.limitCents,
+                                       children: status.children.compactMap(convert))
         }
-        let sorted = categories.sorted { ($0.sortOrder, $0.name) < ($1.sortOrder, $1.name) }
-        return sorted.filter { $0.parentID == nil }.compactMap { parent in
-            let children = sorted.filter { $0.parentID == parent.id }.compactMap { child -> SufficeBudgetStatus? in
-                let childSpent = spent[child.id] ?? 0
-                let active = isActive(child, in: month)
-                guard active || childSpent > 0 else { return nil }
-                return SufficeBudgetStatus(category: child, spentCents: childSpent, limitCents: active ? child.limitCents : 0)
-            }
-            let total = (spent[parent.id] ?? 0) + children.reduce(0) { $0 + $1.spentCents }
-            let active = isActive(parent, in: month)
-            guard active || total > 0 else { return nil }
-            let childLimits = children.reduce(0) { $0 + $1.limitCents }
-            let limit = !active ? 0 : (parent.limitCents > 0 || children.isEmpty ? parent.limitCents : childLimits)
-            return SufficeBudgetStatus(category: parent, spentCents: total, limitCents: limit, children: children)
-        }
+        return HearthMoney.statuses(book.categories, entries: book.entries, in: HearthMoney.Span(start: month.start, end: month.end))
+            .compactMap(convert)
     }
 
     // MARK: Spending
@@ -257,68 +239,53 @@ nonisolated struct SufficeLedger: Sendable {
         var largest: [SufficeEntry]
     }
 
-    /// Spending in a range, optionally only one budget, one place or one person.
+    /// For an empty answer: how far the mirrored ledger reaches, so a range past its newest entry
+    /// reads as "not synced yet", not "nothing was spent".
+    func coverageNote(for range: EmberRange) -> String? {
+        let dated = entries.filter { $0.date > .distantPast }
+        guard let newest = dated.max(by: { $0.date < $1.date }) else {
+            return "Ember has no Suffice entries yet (Suffice may not have synced to iCloud)."
+        }
+        let when = newest.date.formatted(.dateTime.month(.abbreviated).day().year())
+        if newest.date < range.start {
+            return "Suffice's newest entry that Ember can see is from \(when), before this period, so Suffice may not have synced its latest transactions to iCloud yet. Say that rather than that nothing was spent."
+        }
+        return "Ember sees \(dated.count) Suffice entries, the newest from \(when)."
+    }
+
+    /// Spending in a range, optionally only one budget, one place or one person (HearthMoney's query).
     func spending(in range: EmberRange, budget: SufficeCategory? = nil, payee: String? = nil, memberID: UUID? = nil) -> Spending {
-        let inRange = entries.filter { range.contains($0.date) }
-        let payeeKey = payee.map(Self.fold).flatMap { $0.isEmpty ? nil : $0 }
-        let budgetIDs: Set<UUID>? = budget.map { budget in
-            Set([budget.id] + categories.filter { $0.parentID == budget.id }.map(\.id))
-        }
-        var total = 0
-        var count = 0
-        var byBudget: [String: Int] = [:]
-        var byPayee: [String: Int] = [:]
+        let book = self.book
+        let query = HearthMoney.Query(span: HearthMoney.Span(start: range.start, end: range.end),
+                                      member: memberID.flatMap { id in book.members.first { $0.id == id } },
+                                      payee: payee, budget: budget.flatMap { book.category($0.id) })
+        let result = HearthMoney.run(query, in: book, comparing: false)
         var byMember: [String: Int] = [:]
-        var matched: [SufficeEntry] = []
-        for entry in inRange where !entry.isIncome {
-            if let payeeKey, !Self.fold(entry.payee).contains(payeeKey) { continue }
-            if let memberID, entry.memberID != memberID { continue }
-            var cents = 0
-            for part in entry.spendingParts {
-                if let budgetIDs, !(part.categoryID.map(budgetIDs.contains) ?? false) { continue }
-                cents += part.amountCents
-                let name = topLevel(part.categoryID)?.name ?? "Uncategorized"
-                byBudget[name, default: 0] += part.amountCents
-            }
-            guard cents > 0 else { continue }
-            total += cents
-            count += 1
-            byPayee[entry.payee.isEmpty ? "Unknown" : entry.payee, default: 0] += cents
-            let who = members.first { $0.id == entry.memberID }?.name ?? "Unassigned"
-            byMember[who, default: 0] += cents
-            matched.append(entry)
+        for match in result.matches {
+            byMember[members.first { $0.id == match.entry.memberID }?.name ?? "Unassigned", default: 0] += match.cents
         }
-        let income = inRange.filter(\.isIncome).reduce(0) { $0 + $1.amountCents }
-        func ranked(_ values: [String: Int]) -> [(String, Int)] { values.sorted { $0.value > $1.value }.map { ($0.key, $0.value) } }
+        let byID = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let largest = result.matches.sorted { $0.entry.amountCents > $1.entry.amountCents }.prefix(5).compactMap { byID[$0.entry.id] }
         return Spending(
-            totalCents: total,
-            incomeCents: income,
-            count: count,
-            byBudget: ranked(byBudget),
-            byPayee: ranked(byPayee),
-            byMember: ranked(byMember),
-            largest: Array(matched.sorted { $0.amountCents > $1.amountCents }.prefix(5))
+            totalCents: result.spentCents,
+            incomeCents: result.incomeCents,
+            count: result.count,
+            byBudget: result.byBudget,
+            byPayee: result.byPayee,
+            byMember: byMember.sorted { $0.value > $1.value }.map { ($0.key, $0.value) },
+            largest: Array(largest)
         )
     }
 
     // MARK: Bills
 
     /// Due dates in a range, paid or not; late ones up to 45 days back are included when the
-    /// range starts today.
+    /// range starts today (HearthMoney's math).
     func dues(in range: EmberRange, includeLate: Bool = true, now: Date = .now, calendar: Calendar = .current) -> [SufficeDue] {
-        let today = calendar.startOfDay(for: now)
-        let lateFrom = includeLate && range.start <= today ? (calendar.date(byAdding: .day, value: -45, to: today) ?? today) : range.start
-        let payments = entries.filter { $0.billID != nil }
-        var result: [SufficeDue] = []
-        for bill in bills where bill.isActive {
-            for date in occurrences(of: bill, from: lateFrom, to: range.end, calendar: calendar) {
-                let paid = payment(for: bill, dueOn: date, payments: payments, calendar: calendar) != nil
-                // Before the range: only the unpaid (late) ones.
-                if date < range.start && paid { continue }
-                result.append(SufficeDue(bill: bill, date: date, isPaid: paid))
-            }
-        }
-        return result.sorted { $0.date < $1.date }
+        let byID = Dictionary(bills.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return HearthMoney.dues(book.bills, entries: book.entries, in: HearthMoney.Span(start: range.start, end: range.end),
+                                includeLate: includeLate, now: now, calendar: calendar)
+            .compactMap { due in byID[due.bill.id].map { SufficeDue(bill: $0, date: due.date, isPaid: due.isPaid) } }
     }
 
     func findBill(_ spoken: String) -> SufficeBill? {
@@ -329,49 +296,33 @@ nonisolated struct SufficeLedger: Sendable {
     }
 
     func occurrences(of bill: SufficeBill, from start: Date, to end: Date, calendar: Calendar = .current) -> [Date] {
-        let from = calendar.startOfDay(for: start)
-        let hasStart = bill.startDate > .distantPast
-        let first = hasStart ? calendar.startOfDay(for: bill.startDate) : .distantPast
-        let last = bill.endDate.map { calendar.startOfDay(for: $0) }
-        let interval = max(bill.interval, 1)
-        var dates: [Date] = []
-        func keep(_ date: Date) -> Bool {
-            date >= from && date < end && date >= first && (last.map { date <= $0 } ?? true)
-        }
-        func monthStart(_ date: Date) -> Date { calendar.dateInterval(of: .month, for: date)?.start ?? date }
-        switch bill.frequency {
-        case .once:
-            if hasStart, keep(first) { dates.append(first) }
-        case .weekly:
-            guard hasStart else { break }
-            let step = 7 * interval
-            let daysIn = calendar.dateComponents([.day], from: first, to: from).day ?? 0
-            var index = max(0, daysIn / step)
-            while let date = calendar.date(byAdding: .day, value: index * step, to: first), date < end {
-                if keep(date) { dates.append(date) }
-                index += 1
-            }
-        case .monthly, .yearly:
-            let monthsPerStep = bill.frequency == .yearly ? 12 * interval : interval
-            let anchor = monthStart(hasStart ? first : from)
-            let monthsIn = calendar.dateComponents([.month], from: anchor, to: monthStart(from)).month ?? 0
-            var index = max(0, monthsIn / monthsPerStep)
-            while let month = calendar.date(byAdding: .month, value: index * monthsPerStep, to: anchor), month < end {
-                let days = calendar.range(of: .day, in: .month, for: month)?.count ?? 28
-                let day = min(max(bill.dueDay, 1), days)
-                if let date = calendar.date(byAdding: .day, value: day - 1, to: month), keep(date) { dates.append(date) }
-                index += 1
-            }
-        }
-        return dates
+        HearthMoney.occurrences(of: Self.money(bill), from: start, to: end, calendar: calendar)
     }
 
-    func payment(for bill: SufficeBill, dueOn due: Date, payments: [SufficeEntry], calendar: Calendar = .current) -> SufficeEntry? {
-        payments.filter { entry in
-            guard entry.billID == bill.id else { return false }
-            if let paidFor = entry.billDueDate { return calendar.isDate(paidFor, inSameDayAs: due) }
-            return calendar.isDate(entry.date, equalTo: due, toGranularity: .month)
-        }.max { $0.date < $1.date }
+    // MARK: HearthMoney
+
+    /// The budget as HearthMoney's values: what the shared math and answers read.
+    var book: HearthMoney.Book {
+        HearthMoney.Book(
+            categories: categories.map { HearthMoney.Category(id: $0.id, name: $0.name, limitCents: $0.limitCents, parentID: $0.parentID,
+                                                              startMonth: $0.startMonth, repeatsMonthly: $0.repeatsMonthly,
+                                                              isArchived: $0.isArchived, sortOrder: $0.sortOrder) },
+            entries: entries.map { entry in
+                HearthMoney.Entry(id: entry.id, date: entry.date, payee: entry.payee, place: entry.placeName, amountCents: entry.amountCents,
+                                  isIncome: entry.isIncome, categoryID: entry.categoryID, memberID: entry.memberID, billID: entry.billID,
+                                  billDueDate: entry.billDueDate,
+                                  splits: entry.splits.map { HearthMoney.Part(categoryID: $0.categoryID, amountCents: $0.amountCents) },
+                                  stashCents: entry.stashCents)
+            },
+            bills: bills.map(Self.money),
+            members: members.map { HearthMoney.Member(id: $0.id, name: $0.name) }
+        )
+    }
+
+    static func money(_ bill: SufficeBill) -> HearthMoney.Bill {
+        HearthMoney.Bill(id: bill.id, name: bill.name, amountCents: bill.amountCents, isVariable: bill.isVariable, dueDay: bill.dueDay,
+                         frequency: HearthMoney.Bill.Frequency(rawValue: bill.frequency.rawValue) ?? .monthly, interval: bill.interval,
+                         startDate: bill.startDate, endDate: bill.endDate, isAutopay: bill.isAutopay, isActive: bill.isActive)
     }
 
     // MARK: Writing

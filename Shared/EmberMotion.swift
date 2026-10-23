@@ -292,11 +292,10 @@ struct HearthMicRing: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 20, paused: reduceMotion || isLuminanceReduced)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 3600)
+            // The ring is exactly `size`; the soft glow is drawn behind it and never takes up
+            // room (sized inside the ZStack, it made every circle 1.5× and the button spilled
+            // over the text field).
             ZStack {
-                Circle()
-                    .fill(RadialGradient(colors: [EmberPalette.colors[1].opacity(0.35), .clear],
-                                         center: .center, startRadius: size * 0.3, endRadius: size * 0.75))
-                    .frame(width: size * 1.5, height: size * 1.5)
                 Circle()
                     .fill(EmberPalette.wheel)
                     .rotationEffect(.radians(reduceMotion ? 0 : t * 2 * .pi / 6))
@@ -308,6 +307,13 @@ struct HearthMicRing: View {
                     .foregroundStyle(.white)
             }
             .frame(width: size, height: size)
+            .background {
+                Circle()
+                    .fill(RadialGradient(colors: [EmberPalette.colors[1].opacity(0.3), .clear],
+                                         center: .center, startRadius: size * 0.35, endRadius: size * 0.65))
+                    .frame(width: size * 1.3, height: size * 1.3)
+                    .allowsHitTesting(false)
+            }
         }
         .frame(width: size, height: size)
     }

@@ -3,30 +3,20 @@ import SwiftUI
 
 // The Watch screens, from the "Ember Redesign" canvas:
 //
-//   Face      the talk button (the turning ring of the five app colors) and one glance
-//   Thinking  the edge glows thin and fast; the five embers circle
-//   Answer    the answer, spoken, with the speaking glow; at most two buttons; Done
+//   Face      the orb (Liquid Glass with the living light) and one glance
+//   Thinking  the orb's colors swirl around its white heart
+//   Answer    the answer, spoken, with a small orb pulsing; at most two buttons; Done
 //
-// Tapping the talk button opens dictation; what's said is sent when it closes.
+// The orb is the talk button: tapping it opens dictation, and what's said is sent when it closes.
 
 struct WatchRootView: View {
     @Environment(WatchModel.self) private var model
     @State private var signedIn = true
     @State private var nonce = ""
 
-    private var edgeMode: HearthEdgeGlow.Mode {
-        switch model.phase {
-        case .thinking: .thinking
-        case .answer: model.isSpeaking ? .speaking : .off
-        case .face, .failed: .off
-        }
-    }
-
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            HearthEdgeGlow(mode: edgeMode, cornerRadius: 40)
-                .ignoresSafeArea()
 
             switch model.phase {
             case .face: face
@@ -51,12 +41,12 @@ struct WatchRootView: View {
         ScrollView {
             VStack(spacing: 8) {
                 TextFieldLink(prompt: Text("Ask Ember")) {
-                    // The ring ignores touches; this circle under it is what the tap lands on.
+                    // A filled circle under the orb, so the whole button takes the tap.
                     ZStack {
                         Circle().fill(Color.black.opacity(0.001))
-                        HearthMicRing(size: 96, lineWidth: 5)
+                        EmberOrb(mode: .idle, size: 92)
                     }
-                    .frame(width: 104, height: 104)
+                    .frame(width: 108, height: 108)
                     .contentShape(.circle)
                 } onSubmit: { text in
                     model.ask(text)
@@ -123,7 +113,7 @@ struct WatchRootView: View {
 
     private func thinking(_ question: String) -> some View {
         VStack(spacing: 14) {
-            FiveEmbers(size: 56)
+            EmberOrb(mode: .thinking, size: 84)
             Text("“\(question)”")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -140,7 +130,7 @@ struct WatchRootView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
-                    EmberVoiceGlow(size: 26, speaking: model.isSpeaking)
+                    EmberOrb(mode: model.isSpeaking ? .speaking : .idle, size: 30)
                     if reply.tier.usedCloud {
                         Image(systemName: "cloud")
                             .font(.caption2)

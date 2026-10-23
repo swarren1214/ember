@@ -70,6 +70,7 @@ final class EmberBrain {
         cloudHistory = []
         session = nil
         lastDomains = nil
+        lastRequest = nil
         context = []
     }
 
@@ -85,14 +86,42 @@ final class EmberBrain {
         toolbox.beginTurn()
         EmberTrace.shared.begin(text)
 
+        // 1. Understand: the question as a typed request (intent + words copied from it).
+        let recentTurn = turns.last.flatMap { Date.now.timeIntervalSince($0.askedAt) < 150 ? $0 : nil }
+        let previous = recentTurn.flatMap { turn in lastRequest.map { (question: turn.question, request: $0) } }
+        let request = await EmberUnderstanding.understand(text, previous: previous)
+        if let request {
+            EmberTrace.shared.note("request \(request.intent.rawValue) when=\(request.whenWords) who=\(request.who) place=\(request.placeWords) budget=\(request.budgetWords)")
+        }
+
         // Earlier turns go to the model only when this one builds on them. Otherwise the small
         // on-device model latches onto the last question and answers it again.
-        let followsUp = Self.isFollowUp(text, after: turns.last)
+        let followsUp = Self.isFollowUp(text, after: turns.last) || (request?.isFollowUp == true && previous != nil)
+        lastRequest = request
+
+        // 2–4. Money questions (spending, purchases, budgets, bills): resolved, queried and
+        // answered in plain code, with the math Suffice itself uses (HearthMoney).
+        if let request, EmberMoneyPipeline.handles(request.intent), EmberSettings.shared.canRead(.suffice),
+           let turn = await answerMoney(request, question: text, onSentence: onSentence) {
+            lastDomains = [.money]
+            context = []
+            session = nil
+            turns.append(turn)
+            EmberTrace.shared.end(turn)
+            return turn
+        }
+
         if !followsUp { cloudHistory = []; redactor = nil }
         context = followsUp ? Array(turns.suffix(2)) : []
         EmberTrace.shared.note(followsUp ? "follow-up" : "new question")
 
-        var decision = await EmberRouter.decide(text, onDevice: Self.onDeviceAvailable)
+        // The request's intent picks the tools; keyword routing only when it couldn't tell.
+        var decision: EmberRouter.Decision
+        if let request, request.intent != .general, request.intent != .unsupported {
+            decision = EmberRouter.Decision(domains: request.intent.domains, isComplex: Self.isPlanning(text))
+        } else {
+            decision = await EmberRouter.decide(text, onDevice: Self.onDeviceAvailable)
+        }
         // A follow-up stays on the last question's topic ("and last month?" has no topic words).
         if followsUp, let lastDomains {
             decision.domains.formUnion(lastDomains)
@@ -137,6 +166,26 @@ final class EmberBrain {
         turn.asksBack = toolbox.asksToChoose || EmberActions.shared.hasWaiting
         turns.append(turn)
         EmberTrace.shared.end(turn)
+        return turn
+    }
+
+    // MARK: Money, in plain code
+
+    @ObservationIgnored private var lastRequest: EmberRequest?
+
+    /// A money question answered from the ledger by EmberMoneyPipeline: no model
+    /// writes the numbers. Nil when the budget can't be read (the tools path explains why).
+    private func answerMoney(_ request: EmberRequest, question: String, onSentence: (String) -> Void) async -> EmberTurn? {
+        let data = EmberData.shared
+        guard case .success(let ledger) = await data.ledger(), !ledger.isEmpty else { return nil }
+        let reply = EmberMoneyPipeline.answer(request, question: question, ledger: ledger)
+        EmberTrace.shared.note("money pipeline: \(reply.text)")
+        if let card = reply.card { toolbox.present(card, app: .suffice, link: URL(string: "suffice://budget"), action: "Open in Suffice") }
+        var turn = EmberTurn(question: question, answer: reply.text, tier: .onDevice)
+        turn.cards = toolbox.takeCards()
+        turn.sources = [.suffice]
+        turn.asksBack = reply.asksBack
+        Self.sentences(in: reply.text).forEach(onSentence)
         return turn
     }
 

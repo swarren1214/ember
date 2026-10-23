@@ -120,6 +120,17 @@ nonisolated enum EmberContactSearch {
             .trimmingCharacters(in: .whitespaces)
     }
 
+    /// Contacts allowed for only the people picked (iOS 18's limited access).
+    static var isLimited: Bool { CNContactStore.authorizationStatus(for: .contacts) == .limited }
+
+    /// A first name or a full name ("Kristen", "Kristen Warren"), not a kind of business
+    /// ("pizza", "the dentist").
+    static func looksLikePerson(_ spoken: String) -> Bool {
+        let words = spoken.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: " ")
+        guard (1...3).contains(words.count) else { return false }
+        return words.allSatisfy { $0.first?.isUppercase == true }
+    }
+
     /// Asks for Contacts once; false when it's not allowed.
     static func hasAccess() async -> Bool {
         switch CNContactStore.authorizationStatus(for: .contacts) {

@@ -72,6 +72,8 @@ nonisolated enum EmberSkills {
         let delta = result.totalCents - previous.totalCents
         lines.append("The \(previousRange.days) days before (\(previousRange.label())): \(EmberMoney.text(previous.totalCents)) (\(delta >= 0 ? "up" : "down") \(EmberMoney.text(abs(delta)))).")
         if result.incomeCents > 0, category == nil, place.isEmpty { lines.append("Income in that time: \(EmberMoney.text(result.incomeCents)).") }
+        if result.count == 0, let note = ledger.coverageNote(for: range) { lines.append(note) }
+        if let note = unreadDate(spoken, used: range, now: now) { lines.insert(note, at: 0) }
 
         let rows = (category == nil ? result.byBudget : result.byPayee).prefix(5).map { EmberRow(title: $0.0, value: EmberMoney.text($0.1)) }
         return EmberAnswer(facts: lines.joined(separator: "\n"),
@@ -146,11 +148,23 @@ nonisolated enum EmberSkills {
             .filter { key.isEmpty || SufficeLedger.fold($0.payee).contains(key) }
             .filter { entry in ids.map { ids in entry.parts.contains { $0.categoryID.map(ids.contains) ?? false } } ?? true }
             .sorted { $0.date > $1.date }
-        guard !entries.isEmpty else { return .missing("No purchases \(range.label())\(place.isEmpty ? "" : " at \(place)").") }
+        guard !entries.isEmpty else {
+            let lines = [unreadDate(spoken, used: range, now: now),
+                         "No purchases \(range.label())\(place.isEmpty ? "" : " at \(place)").",
+                         ledger.coverageNote(for: range)].compactMap { $0 }
+            return .missing(lines.joined(separator: "\n"))
+        }
         let lines = entries.prefix(12).map { "\($0.date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())): \($0.payee) \(EmberMoney.exact($0.amountCents)) (\(ledger.topLevel($0.categoryID)?.name ?? "uncategorized"))" }
         let rows = entries.prefix(8).map { EmberRow(title: $0.payee, value: EmberMoney.exact($0.amountCents), detail: $0.date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())) }
         return EmberAnswer(facts: "\(entries.count) purchases \(range.label()), newest first:\n" + lines.joined(separator: "\n"),
                            title: "Purchases", value: "\(entries.count)", subtitle: range.label(), rows: Array(rows))
+    }
+
+    /// When the period asked for couldn't be read and a default was used instead, a line saying
+    /// so, so the answer doesn't present the default as the day that was asked about.
+    static func unreadDate(_ spoken: String, used range: EmberRange, now: Date) -> String? {
+        guard !EmberDates.reads(spoken, now: now) else { return nil }
+        return "Note: \"\(spoken)\" couldn't be read as a date, so this covers \(range.label()) instead. Say that, and ask which day they meant."
     }
 
     // MARK: Family (Caloma)

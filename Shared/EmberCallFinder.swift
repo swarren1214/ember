@@ -67,12 +67,19 @@ nonisolated enum EmberCallFinder {
         let who = who.trimmingCharacters(in: .whitespacesAndNewlines)
         let near = near.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !who.isEmpty else { return .failure(.nothingFound) }
-        // A town means a place; otherwise people they know come first.
-        if near.isEmpty, which.isEmpty {
+        // People they know always come first, even when a town came along (the model often
+        // fills in the town they're in): "call Kristen" is Kristen in Contacts, not a business
+        // called Kristen near Santaquin.
+        if which.isEmpty {
             let allowed = await EmberContactSearch.hasAccess()
             if allowed, let person = await contact(named: who) { return .success(.one(person)) }
             // "Mom" or "my wife" is someone they know, never a business on the map.
             if EmberContactSearch.isRelation(who) { return .failure(allowed ? .notInContacts : .needsContacts) }
+            // Contacts shared only in part (iOS's limited access): the person may just not be
+            // among the shared ones.
+            if EmberContactSearch.isLimited, near.isEmpty, EmberContactSearch.looksLikePerson(who) {
+                return .failure(.notInContacts)
+            }
         }
         let here = await currentLocation()
         return await places(who, near: near, which: which, here: here)

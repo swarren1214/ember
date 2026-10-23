@@ -1,9 +1,19 @@
 import CloudKit
 import Foundation
 
-// Standalone turns: the Watch asks Claude through hearth-api itself (Wi-Fi or cellular, no
-// iPhone). Same privacy rules as the iPhone: the redactor runs here before anything is sent,
-// hearth-api checks again, and the device does the sensitive work.
+// Standalone turns: the Watch answers through hearth-api itself (Wi-Fi or cellular, no iPhone),
+// with the same pipeline as the iPhone (Ember Assistant Architecture):
+//
+//   1. Understand: Claude fills in the typed request (/v1/ember/understand) from the
+//      de-identified question; copied words are checked against the question here.
+//   2. Money (spending, purchases, budgets, bills), calls and adding groceries are then resolved,
+//      queried and answered in plain code: the same EmberMoneyPipeline and HearthMoney as the
+//      iPhone and Suffice, the same call finder, so the Watch says exactly what the iPhone says.
+//   3. Anything else (chores, the calendar, the grocery list, the day's facts) is still a Claude
+//      turn, offered only the tools for the request's intent.
+//
+// Same privacy rules as the iPhone: the redactor runs here before anything is sent, hearth-api
+// checks again, and the device does the sensitive work.
 //
 // The Watch reads the family's data on its own, from the same iCloud zones the iPhone reads
 // (Suffice's budget, Caloma's family, BigTable's kitchen), with the same answers (EmberSkills),
@@ -16,6 +26,8 @@ final class WatchBrain {
 
     private var redactor: EmberRedactor?
     private var history: [EmberCloudMessage] = []
+    /// The last question and its request, for follow-ups ("what about last week?").
+    private var last: (question: String, request: EmberRequest, at: Date)?
     private let budget = EmberZone(zoneName: SufficeLedger.zoneName)
     private let family = EmberZone(zoneName: CalomaFamily.zoneName)
     private let kitchen = EmberZone(zoneName: BigTableGroceries.zoneName)
@@ -41,12 +53,26 @@ final class WatchBrain {
 
         var redactor = self.redactor ?? EmberRedactor(household: context.people.map { EmberPerson(name: $0.name, role: $0.role, age: $0.age) })
         defer { self.redactor = redactor }
+        // 1. Understand.
+        let request = await understand(question, redactor: &redactor)
+        if let request { last = (question, request, .now) } else { last = nil }
+
+        // 2. Money, calls and adding groceries: answered in plain code.
+        if let request, let reply = await solve(request, question: question, context: context) {
+            var sentences = EmberSentenceSplitter()
+            for sentence in sentences.feed(reply.text) { onSentence(sentence) }
+            if let rest = sentences.flush() { onSentence(rest) }
+            history = []
+            return (EmberWatchReply(id: id, text: reply.text, actions: reply.actions, tier: .claude), true)
+        }
+
+        // 3. The rest: a Claude turn with the tools for the request's intent.
         var messages = Array(history.suffix(8))
         messages.append(EmberCloudMessage(role: "user", content: [.text(redactor.redact(question))]))
         var answer = ""
         var splitter = EmberSentenceSplitter()
         var actions: [EmberWatchAction] = []
-        let tools = Self.tools
+        let tools = request.map { Self.tools(for: $0.intent) } ?? Self.tools
 
         do {
             for _ in 0..<4 {
@@ -103,7 +129,100 @@ final class WatchBrain {
         }
     }
 
+    // MARK: The pipeline
+
+    /// The request, from Claude (de-identified), checked against the question and merged onto
+    /// the last one for a follow-up. Nil when the cloud can't be reached.
+    private func understand(_ question: String, redactor: inout EmberRedactor) async -> EmberRequest? {
+        guard let token = try? await WatchAccount.shared.accessToken() else { return nil }
+        let recent = last.flatMap { Date.now.timeIntervalSince($0.at) < 150 ? $0 : nil }
+        let redacted = redactor.redact(question)
+        let earlier = recent.map { (question: redactor.redact($0.question), intent: $0.request.intent) }
+        guard let raw = try? await EmberCloudClient(baseURL: EmberEndpoints.apiBaseURL)
+            .understand(redacted, previous: earlier, accessToken: token, timeout: 4) else { return nil }
+        var request = raw.restored(with: redactor).checked(against: question)
+        if request.isFollowUp, let recent { request = request.merged(onto: recent.request) }
+        return request
+    }
+
+    private struct PipelineReply {
+        var text: String
+        var actions: [EmberWatchAction] = []
+    }
+
+    /// The answer worked out in code, or nil for intents that still need a Claude turn.
+    private func solve(_ request: EmberRequest, question: String, context: EmberWatchContext) async -> PipelineReply? {
+        if !request.clarify.isEmpty, request.intent == .unsupported { return PipelineReply(text: request.clarify) }
+        if EmberMoneyPipeline.handles(request.intent) {
+            await budget.refresh()
+            let ledger = await budget.snapshot(SufficeLedger.init(records:))
+            guard !ledger.isEmpty else {
+                return PipelineReply(text: budget.lastError?.errorDescription ?? "Suffice’s budget isn’t in iCloud yet. Open Suffice on your iPhone once.")
+            }
+            return PipelineReply(text: EmberMoneyPipeline.answer(request, question: question, ledger: ledger).text)
+        }
+        switch request.intent {
+        case .call:
+            let who = request.who.isEmpty ? request.placeWords : request.who
+            guard !who.isEmpty else { return PipelineReply(text: "Who should I call?") }
+            return await callReply(who: who, near: request.townWords)
+        case .addGroceries where !request.items.isEmpty:
+            await kitchen.refresh()
+            let list = BigTableGroceries(records: Array(kitchen.records.values))
+            let items = request.items.map { (name: $0.trimmingCharacters(in: .whitespaces), quantity: "") }.filter { !$0.name.isEmpty }
+            guard !items.isEmpty, let record = BigTableGroceries.adding(items, in: kitchen, activeRecordName: list.activeRecordName) else {
+                return PipelineReply(text: "There’s no grocery list to add to yet. Make one in BigTable.")
+            }
+            do {
+                try await kitchen.save([record])
+                return PipelineReply(text: "Added \(items.map(\.name).formatted(.list(type: .and))) to the grocery list.")
+            } catch {
+                return PipelineReply(text: "I couldn’t add them just now. Try again in a moment.")
+            }
+        default:
+            return nil
+        }
+    }
+
+    /// A call, as the iPhone words it: "Calling Mom." with a Call button, or which one.
+    private func callReply(who: String, near: String) async -> PipelineReply {
+        switch await EmberCallFinder.find(who, near: near) {
+        case .success(.one(let target)):
+            let name = EmberContactSearch.isRelation(who) ? who.trimmingCharacters(in: .whitespaces).capitalizedFirst : target.name
+            let actions = target.url.map { [EmberWatchAction(title: "Call \(target.name)", url: $0.absoluteString)] } ?? []
+            return PipelineReply(text: "Calling \(name). Tap Call.", actions: actions)
+        case .success(.several(let targets)):
+            let two = Array(targets.prefix(2))
+            let actions = two.compactMap { target in
+                target.url.map { EmberWatchAction(title: "Call \(target.street ?? target.place ?? target.name)", url: $0.absoluteString) }
+            }
+            let names = two.map { $0.street ?? $0.place ?? $0.name }
+            return PipelineReply(text: "There’s more than one \(who). The one on \(names.joined(separator: ", or the one on "))?", actions: actions)
+        case .failure(.needsLocation):
+            return PipelineReply(text: "I need Location on your Watch to find \(who) nearby, or say the town.")
+        case .failure(.needsContacts):
+            return PipelineReply(text: "I need Contacts access on your Watch to call \(who).")
+        case .failure(.notInContacts):
+            return PipelineReply(text: "I couldn’t find \(who) in your contacts.")
+        case .failure(.nothingFound):
+            return PipelineReply(text: "I couldn’t find a number for \(who).")
+        }
+    }
+
     // MARK: Tools
+
+    /// The Claude turn's tools for an intent the code doesn't answer yet.
+    static func tools(for intent: EmberIntent) -> [WatchTool] {
+        let names: Set<String> = switch intent {
+        case .calendar, .addEvent: ["family_calendar", "household_facts"]
+        case .chores: ["chores", "household_facts"]
+        case .groceries, .addGroceries, .mealPlan: ["grocery_list", "add_groceries", "household_facts"]
+        case .call: ["place_call"]
+        case .spending, .transactions, .budgetStatus, .bills, .logPurchase: ["spending", "budgets", "bills"]
+        default: ["household_facts"]
+        }
+        return tools.filter { names.contains($0.name) }
+    }
 
     struct WatchTool {
         var name: String
@@ -138,7 +257,7 @@ final class WatchBrain {
         tool("grocery_list", "What's on the grocery list, or whether one item is.", [("item", "One item, or empty.", false)]),
         tool("add_groceries", "Adds items to the grocery list right away.", [("items", "The items, comma separated.", true)]),
         tool("place_call", "Calls a person or business; the Watch shows a Call button. Several matches: ask which.",
-             [("who", "Who to call.", true), ("near", "A town they named, or empty.", false), ("which", "Their answer to which one, or empty.", false)]),
+             [("who", "Who to call.", true), ("near", "Only a town they said for a business; empty for people.", false), ("which", "Their answer to which one, or empty.", false)]),
     ]
 
     private func run(_ name: String, args: [String: String], context: EmberWatchContext, actions: inout [EmberWatchAction]) async -> String {

@@ -1,9 +1,10 @@
 import SwiftUI
 
-// Talking with Ember, hands free, laid out like Ask Suffice's voice screen: the edge glows in
-// the Hearth colors while the microphone is on, what you say appears in large type, and a glass
-// panel at the bottom shows what's happening with the one control that fits it, then the
-// answer and its cards. Type hands over to the text field; Done closes.
+// Talking with Ember, hands free: the orb (Liquid Glass with a living light inside) sits in the
+// middle and shows what Ember is doing, what you say appears under it in large type, and a glass
+// panel at the bottom holds the answer, its cards and the one control that fits. Tapping the orb
+// does the obvious thing: sends what you said, stops Ember talking, or turns the microphone back
+// on. Type hands over to the text field; Done closes.
 
 struct EmberVoiceView: View {
     /// Called when the person taps Type: the composer takes over.
@@ -19,32 +20,30 @@ struct EmberVoiceView: View {
         return brain.turns.first { $0.id == id }
     }
 
-    private var edgeMode: HearthEdgeGlow.Mode {
+    private var orbMode: EmberOrb.Mode {
         switch conversation.phase {
         case .starting, .listening: .listening
         case .thinking: .thinking
         case .speaking: .speaking
-        case .idle, .paused, .failed: .off
+        case .idle, .paused, .failed: .idle
         }
     }
 
-    var body: some View {
-        ZStack {
-            HearthEdgeGlow(mode: edgeMode, cornerRadius: 56)
-                .ignoresSafeArea()
+    /// An answer is on screen: the orb steps back to make room.
+    private var showsAnswer: Bool { conversation.phase != .thinking && answerText != nil }
 
-            VStack(alignment: .leading, spacing: 0) {
-                topBar
-                Spacer(minLength: 20)
-                transcript
-                Spacer(minLength: 20)
-                panel
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
-            .readableWidth(640)
+    var body: some View {
+        VStack(spacing: 0) {
+            topBar
+            Spacer(minLength: 8)
+            hero
+            Spacer(minLength: 8)
+            panel
         }
-        .background(Color(white: 0.05).ignoresSafeArea())
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
+        .readableWidth(640)
+        .background(Color(white: 0.04).ignoresSafeArea())
         .preferredColorScheme(.dark)
         .task {
             await conversation.startVoice()
@@ -56,6 +55,49 @@ struct EmberVoiceView: View {
             micMode = EmberAudio.microphoneModeName
         }
         .sensoryFeedback(.impact(weight: .light), trigger: conversation.phase == .thinking)
+    }
+
+    // MARK: The orb and what you said
+
+    private var hero: some View {
+        VStack(spacing: 18) {
+            Button(action: orbTapped) {
+                EmberOrb(mode: orbMode, size: 196)
+                    .padding(24)
+                    .contentShape(.circle)
+            }
+            .buttonStyle(.plain)
+            .scaleEffect(showsAnswer ? 0.62 : 1)
+            .frame(height: showsAnswer ? 150 : 244)
+            .accessibilityLabel(orbLabel)
+
+            VStack(spacing: 10) {
+                Text(heading)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(EmberTheme.ash)
+                transcript
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .animation(.smooth(duration: 0.5), value: showsAnswer)
+    }
+
+    private var orbLabel: String {
+        switch conversation.phase {
+        case .listening: conversation.transcript.isEmpty ? "Ember is listening" : "Send"
+        case .thinking, .speaking: "Stop Ember"
+        case .paused, .failed: "Turn the microphone on"
+        case .idle, .starting: "Ember"
+        }
+    }
+
+    private func orbTapped() {
+        switch conversation.phase {
+        case .listening where !conversation.transcript.isEmpty: conversation.finishSpeaking()
+        case .thinking, .speaking: conversation.interrupt()
+        case .paused, .failed: Task { await conversation.resume() }
+        default: break
+        }
     }
 
     // MARK: Top bar
@@ -95,10 +137,7 @@ struct EmberVoiceView: View {
     // MARK: What you said
 
     private var transcript: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(heading)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(conversation.isListening ? EmberTheme.text : EmberTheme.ash)
+        Group {
             if conversation.isListening || conversation.phase == .starting {
                 if conversation.transcript.isEmpty {
                     Text(conversation.question.isEmpty ? "Ask about your household, or anything at all." : "Go ahead, I’m listening.")
@@ -114,10 +153,12 @@ struct EmberVoiceView: View {
                 Text("“\(conversation.question)”")
             }
         }
-        .font(.system(size: 30, weight: .semibold))
+        .font(.system(size: showsAnswer ? 20 : 26, weight: .semibold))
         .foregroundStyle(EmberTheme.text)
+        .multilineTextAlignment(.center)
+        .lineLimit(showsAnswer ? 2 : 5)
         .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .animation(.snappy, value: conversation.transcript)
         .padding(.horizontal, 12)
     }
@@ -140,7 +181,7 @@ struct EmberVoiceView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(spacing: 8) {
-                            Circle().fill(EmberPalette.wheel).frame(width: 14, height: 14)
+                            EmberOrb(mode: conversation.phase == .speaking ? .speaking : .idle, size: 18)
                             Text("Ember")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(EmberTheme.ash)
@@ -187,44 +228,34 @@ struct EmberVoiceView: View {
                 ProgressView()
                 Text("Starting…").foregroundStyle(EmberTheme.ash)
             }
-            .frame(maxWidth: .infinity, minHeight: 56)
+            .frame(maxWidth: .infinity, minHeight: 44)
         case .listening:
-            VStack(spacing: 12) {
-                SpectrumBars(barWidth: 6, height: 52)
-                    .frame(maxWidth: .infinity)
-                HStack {
-                    Text(conversation.transcript.isEmpty ? "Listening… Ember answers when you pause." : "Pause when you’re done, or tap Send.")
-                        .font(.footnote)
-                        .foregroundStyle(EmberTheme.ash)
-                    Spacer()
-                    if !conversation.transcript.isEmpty {
-                        Button("Send", systemImage: "arrow.up") { conversation.finishSpeaking() }
-                            .labelStyle(.iconOnly)
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 36, height: 36)
-                            .background(EmberTheme.accent, in: .circle)
-                            .buttonStyle(.plain)
-                    }
+            HStack {
+                Text(conversation.transcript.isEmpty ? "Ember answers when you pause." : "Pause when you’re done, or tap Send.")
+                    .font(.footnote)
+                    .foregroundStyle(EmberTheme.ash)
+                Spacer()
+                if !conversation.transcript.isEmpty {
+                    Button("Send", systemImage: "arrow.up") { conversation.finishSpeaking() }
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(EmberTheme.accent, in: .circle)
+                        .buttonStyle(.plain)
                 }
             }
+            .frame(minHeight: 36)
         case .thinking:
-            HStack(spacing: 14) {
-                FiveEmbers(size: 40)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Thinking…")
-                        .foregroundStyle(EmberTheme.text)
-                    Text("Keep talking to change your question.")
-                        .font(.footnote)
-                        .foregroundStyle(EmberTheme.ash)
-                }
+            HStack(spacing: 12) {
+                Text("Thinking… keep talking to change your question.")
+                    .font(.footnote)
+                    .foregroundStyle(EmberTheme.ash)
                 Spacer()
                 stopButton
             }
-            .frame(minHeight: 56)
         case .speaking:
             HStack(spacing: 12) {
-                EmberVoiceGlow(size: 40)
                 Text("Start talking to interrupt.")
                     .font(.footnote)
                     .foregroundStyle(EmberTheme.ash)

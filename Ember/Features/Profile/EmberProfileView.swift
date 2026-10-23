@@ -26,6 +26,11 @@ struct EmberProfileView: View {
         } settings: {
             EmberKnowsSections()
         } data: {
+            NavigationLink {
+                EmberDataStatusView()
+            } label: {
+                HearthProfileRow("iCloud Data", systemImage: "icloud")
+            }
             EmberReportButton()
         } about: {
             Text("Ember’s voice is Kokoro (Apache 2.0), running on your \(DeviceName.current).")
@@ -262,7 +267,7 @@ struct EmberCloudChoiceView: View {
             List {
                 Section {
                     VStack(alignment: .leading, spacing: 10) {
-                        FiveEmbers(size: 60)
+                        EmberOrb(mode: .idle, size: 64)
                         Text("How should Ember think?")
                             .font(.title.bold())
                         Text("Ember answers on your \(DeviceName.current) whenever it can. For harder questions, and for Apple Watch without your \(DeviceName.current) nearby, it can ask for help in the cloud.")
@@ -355,5 +360,100 @@ struct EmberReportButton: View {
             EmberComposeSheet(request: request) { self.request = nil }
                 .ignoresSafeArea()
         }
+    }
+}
+
+/// What Ember can see of each app in iCloud: where it reads from, how much, how fresh, and the
+/// newest Suffice entry, so "Ember says nothing was spent" can be told apart from "Suffice
+/// hasn't synced". Fetch Again throws the copy away and reads everything fresh.
+struct EmberDataStatusView: View {
+    private struct Row: Identifiable {
+        var id: String { name }
+        var name: String
+        var location: String
+        var records: Int
+        var fetched: Date?
+        var error: String?
+    }
+
+    @State private var rows: [Row] = []
+    @State private var entries = 0
+    @State private var newest: Date?
+    @State private var newestPayees: [String] = []
+    @State private var isFetching = false
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(rows) { row in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(row.name).font(.headline)
+                            Spacer()
+                            Text("\(row.records) records").foregroundStyle(.secondary)
+                        }
+                        Text(row.location + (row.fetched.map { " · checked \($0.formatted(.relative(presentation: .named)))" } ?? " · not checked yet"))
+                            .font(.footnote).foregroundStyle(.secondary)
+                        if let error = row.error {
+                            Text(error).font(.footnote).foregroundStyle(.red)
+                        }
+                    }
+                }
+            } header: {
+                Text("Zones")
+            }
+            Section {
+                LabeledContent("Entries", value: "\(entries)")
+                LabeledContent("Newest", value: newest?.formatted(date: .abbreviated, time: .omitted) ?? "None")
+                ForEach(newestPayees, id: \.self) { line in
+                    Text(line).font(.footnote).foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Suffice")
+            } footer: {
+                Text("If Suffice shows newer transactions than these, they haven’t reached iCloud yet: open Suffice on a device with them and check Profile for a sync problem.")
+            }
+            Section {
+                Button {
+                    Task {
+                        isFetching = true
+                        let data = EmberData.shared
+                        await data.budget.refetchEverything()
+                        await data.family.refetchEverything()
+                        await data.kitchen.refetchEverything()
+                        await load()
+                        isFetching = false
+                    }
+                } label: {
+                    HStack {
+                        Text("Fetch Everything Again")
+                        if isFetching { Spacer(); ProgressView() }
+                    }
+                }
+                .disabled(isFetching)
+            }
+        }
+        .navigationTitle("iCloud Data")
+        .task {
+            await EmberData.shared.refreshAll(force: true)
+            await load()
+        }
+        .refreshable {
+            await EmberData.shared.refreshAll(force: true)
+            await load()
+        }
+    }
+
+    private func load() async {
+        let data = EmberData.shared
+        rows = [("Suffice", data.budget), ("Caloma", data.family), ("BigTable", data.kitchen)].map { name, zone in
+            Row(name: name, location: zone.whereLabel, records: zone.records.count, fetched: zone.lastFetched,
+                error: zone.lastError?.localizedDescription)
+        }
+        let ledger = await data.budget.snapshot(SufficeLedger.init(records:))
+        let dated = ledger.entries.filter { $0.date > .distantPast }.sorted { $0.date > $1.date }
+        entries = dated.count
+        newest = dated.first?.date
+        newestPayees = dated.prefix(5).map { "\($0.date.formatted(.dateTime.month(.abbreviated).day())): \($0.payee) \(EmberMoney.exact($0.amountCents))" }
     }
 }
