@@ -705,7 +705,7 @@ nonisolated enum HearthMoney {
         if !ask.place.isEmpty {
             guard let bill = book.findBill(ask.place) else {
                 let names = book.bills.filter(\.isActive).map(\.name)
-                return Reply(text: "I don't see a bill called \(ask.place) in Suffice." + (names.isEmpty ? "" : " Its bills are \(list(Array(names.prefix(8)))).")),
+                return Reply(text: "I don't see a bill called \(ask.place) in Suffice." + (names.isEmpty ? "" : " Its bills are \(list(Array(names.prefix(8))))."),
                              asksBack: !names.isEmpty)
             }
             bills = [bill]
