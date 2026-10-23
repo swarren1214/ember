@@ -36,7 +36,11 @@ enum EmberRouter {
         .food: ["calorie", "calories", "protein", "carbs", "macros", "ate ", "eaten", "sated", "food log", "log food", "snack", "logged", "log a ", "i ate"],
         .study: ["scripture", "reading", "hearken", "study", "chapter", "verse", "book of mormon", "plan progress"],
         .phone: ["call ", "text ", "message ", "email", "e-mail", "remind", "reminder", "timer", "alarm", "wake me",
-                 "my calendar", "my schedule", "meeting", "directions", "navigate", "how do i get to", "phone", "dial"],
+                 "my calendar", "my schedule", "meeting", "phone", "dial"],
+        .places: ["restaurant", "places to eat", "place to eat", "somewhere to eat", "food near", "near me", "nearby", "closest", "nearest",
+                  "coffee", "cafe", "pizza", "burger", "sushi", "taco", "mexican food", "thai", "chinese food", "breakfast place", "brunch",
+                  "bakery", "ice cream", "dessert", "bar ", "gas station", "pharmacy", "drugstore", "grocery store", "store near", "open now",
+                  "what time does", "hours", "directions", "navigate", "how do i get to", "how far is", "where is", "where's the", "find a ", "find me", "takeout", "delivery"],
     ]
 
     static func decide(_ question: String, onDevice: Bool) async -> Decision {

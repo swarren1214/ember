@@ -99,6 +99,85 @@ nonisolated enum EmberCallFinder {
         }.value
     }
 
+    // MARK: Finding places
+
+    /// A place from Apple Maps for "find good restaurants nearby": what it is, roughly where,
+    /// and how to get there or call.
+    struct Place: Sendable, Hashable, Identifiable {
+        var name: String
+        var category: String?
+        var street: String?
+        var town: String?
+        var miles: Double?
+        var phone: String?
+        var maps: URL?
+        var logo: URL?
+        var id: String { (maps?.absoluteString ?? "") + name }
+
+        var detail: String {
+            let where_ = [street, town].compactMap { $0 }.joined(separator: ", ")
+            let away = miles.map { $0 < 10 ? String(format: "%.1f mi", $0) : "\(Int($0.rounded())) mi" }
+            return [category, where_.isEmpty ? nil : where_, away].compactMap { $0 }.joined(separator: " · ")
+        }
+
+        var callURL: URL? {
+            let dialable = (phone ?? "").filter { $0.isNumber || $0 == "+" }
+            return dialable.isEmpty ? nil : URL(string: "tel:" + dialable)
+        }
+    }
+
+    /// Places matching `query` ("good restaurants", "coffee", "a pharmacy"), near the person or
+    /// in a town they named, closest first, at most five.
+    static func search(_ query: String, near: String) async -> Result<[Place], Miss> {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return .failure(.nothingFound) }
+        let here = await currentLocation()
+        var center = here
+        if !near.trimmingCharacters(in: .whitespaces).isEmpty {
+            guard let town = await nearestTown(named: near, from: here) else { return .failure(.nothingFound) }
+            center = town.location
+        }
+        guard let center else { return .failure(.needsLocation) }
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = query
+        request.resultTypes = .pointOfInterest
+        request.region = MKCoordinateRegion(center: center.coordinate, latitudinalMeters: 16_000, longitudinalMeters: 16_000)
+        guard let items = try? await MKLocalSearch(request: request).start().mapItems, !items.isEmpty else { return .failure(.nothingFound) }
+        let sorted = items.sorted { $0.location.distance(from: center) < $1.location.distance(from: center) }
+        var seen = Set<String>()
+        var places: [Place] = []
+        for item in sorted {
+            let name = item.name ?? query
+            guard seen.insert(name.lowercased()).inserted else { continue }
+            let coordinate = item.location.coordinate
+            var maps = URLComponents(string: "https://maps.apple.com/")
+            maps?.queryItems = [URLQueryItem(name: "q", value: name), URLQueryItem(name: "ll", value: "\(coordinate.latitude),\(coordinate.longitude)")]
+            places.append(Place(
+                name: name,
+                category: item.pointOfInterestCategory.map(Self.categoryName),
+                street: street(of: item),
+                town: city(of: item),
+                miles: here.map { item.location.distance(from: $0) / 1609.344 },
+                phone: item.phoneNumber,
+                maps: maps?.url,
+                logo: EmberLogo.url(website: item.url, name: name)
+            ))
+            if places.count == 5 { break }
+        }
+        return places.isEmpty ? .failure(.nothingFound) : .success(places)
+    }
+
+    /// "MKPOICategoryRestaurant" → "Restaurant".
+    private static func categoryName(_ category: MKPointOfInterestCategory) -> String {
+        let raw = category.rawValue.replacingOccurrences(of: "MKPOICategory", with: "")
+        var words = ""
+        for character in raw {
+            if character.isUppercase, !words.isEmpty { words += " " }
+            words.append(character)
+        }
+        return words.prefix(1).uppercased() + words.dropFirst().lowercased()
+    }
+
     // MARK: Apple Maps
 
     private static func places(_ name: String, near: String, which: String, here: CLLocation?) async -> Result<Found, Miss> {

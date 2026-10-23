@@ -92,8 +92,7 @@ struct EmberAdultsOnlyView: View {
         ZStack {
             EmberTheme.coal.ignoresSafeArea()
             VStack(spacing: 18) {
-                EmberOrb(mood: .idle)
-                    .frame(width: 120, height: 120)
+                FiveEmbers(size: 90)
                 Text("Ember is for parents and adults")
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(EmberTheme.text)
@@ -115,7 +114,7 @@ enum EmberLinks {
         guard url.scheme == "ember" else { return }
         switch url.host() {
         case "listen":
-            if EmberConversation.shared.phase != .listening { EmberConversation.shared.tapOrb() }
+            EmberConversation.shared.presentVoice()
         case "ask":
             let question = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "q" }?.value
             if let question, !question.isEmpty { EmberConversation.shared.ask(question) }

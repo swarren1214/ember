@@ -42,6 +42,8 @@ final class WatchModel: NSObject {
     @ObservationIgnored private let log = Logger(subsystem: "com.stephenwarren.ember.watch", category: "model")
 
     var glances: [EmberGlance] { context?.glances ?? [] }
+    /// Ember is speaking (for the speaking animation).
+    var isSpeaking: Bool { speaker.isSpeaking }
 
     func start() {
         guard WCSession.isSupported() else { return }

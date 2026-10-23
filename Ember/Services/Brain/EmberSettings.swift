@@ -77,6 +77,11 @@ final class EmberSettings {
         didSet { defaults.set(remembered, forKey: Keys.remembered) }
     }
 
+    /// Seconds of silence that end your turn when talking with Ember (0.8, 1.2 or 2).
+    var listeningPause: Double {
+        didSet { defaults.set(listeningPause, forKey: Keys.listeningPause) }
+    }
+
     @ObservationIgnored private let defaults = UserDefaults.standard
 
     private enum Keys {
@@ -87,12 +92,14 @@ final class EmberSettings {
         static let voiceSpeed = "ember.voiceSpeed"
         static let pronunciations = "ember.pronunciations"
         static let remembered = "ember.remembered"
+        static let listeningPause = "ember.listeningPause"
     }
 
     /// The apps Ember can read from today (the others publish nothing yet).
     static let sources: [HearthApp] = [.bigtable, .suffice, .sated, .caloma, .hearken, .trove]
 
     private init() {
+        listeningPause = (UserDefaults.standard.object(forKey: Keys.listeningPause) as? Double) ?? 1.2
         cloudHelp = defaults.string(forKey: Keys.cloudHelp).flatMap(CloudHelp.init(rawValue:))
         if let stored = defaults.stringArray(forKey: Keys.readable) {
             readable = Set(stored.compactMap(HearthApp.init(rawValue:)))

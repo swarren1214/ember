@@ -262,8 +262,7 @@ struct EmberCloudChoiceView: View {
             List {
                 Section {
                     VStack(alignment: .leading, spacing: 10) {
-                        EmberOrb(mood: .idle)
-                            .frame(width: 72, height: 72)
+                        FiveEmbers(size: 60)
                         Text("How should Ember think?")
                             .font(.title.bold())
                         Text("Ember answers on your \(DeviceName.current) whenever it can. For harder questions, and for Apple Watch without your \(DeviceName.current) nearby, it can ask for help in the cloud.")

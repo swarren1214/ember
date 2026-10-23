@@ -68,6 +68,9 @@ final class EmberBrain {
         turns = []
         redactor = nil
         cloudHistory = []
+        session = nil
+        lastDomains = nil
+        context = []
     }
 
     // MARK: Asking
@@ -89,8 +92,16 @@ final class EmberBrain {
         context = followsUp ? Array(turns.suffix(2)) : []
         EmberTrace.shared.note(followsUp ? "follow-up" : "new question")
 
-        let decision = await EmberRouter.decide(text, onDevice: Self.onDeviceAvailable)
-        let tools = toolbox.tools(for: decision.domains)
+        var decision = await EmberRouter.decide(text, onDevice: Self.onDeviceAvailable)
+        // A follow-up stays on the last question's topic ("and last month?" has no topic words).
+        if followsUp, let lastDomains {
+            decision.domains.formUnion(lastDomains)
+            decision.domains.remove(.general)
+            if decision.domains.isEmpty { decision.domains = lastDomains }
+        }
+        lastDomains = decision.domains
+        let tools = toolbox.tools(for: decision.domains, question: text)
+        self.followsUp = followsUp
         let route = Route.choose(complex: decision.isComplex, client: client)
         EmberTrace.shared.note("domains \(decision.domains.map(\.rawValue).sorted().joined(separator: ",")), \(tools.count) tools, \(route)")
         var turn = EmberTurn(question: text, answer: "")
@@ -178,6 +189,13 @@ final class EmberBrain {
 
     /// The exchanges this question builds on (empty for a new question).
     @ObservationIgnored private var context: [EmberTurn] = []
+    @ObservationIgnored private var lastDomains: Set<EmberDomain>?
+    @ObservationIgnored private var followsUp = false
+    /// The on-device conversation, kept across follow-ups on the same topic so the model has
+    /// the real exchange (its tool calls and answers), as Ask Suffice does. A new question starts
+    /// a new one.
+    @ObservationIgnored private var session: LanguageModelSession?
+    @ObservationIgnored private var sessionTools: [String] = []
 
     private var recent: [(String, String)] {
         context.map { ($0.question, $0.answer) }
@@ -202,20 +220,32 @@ final class EmberBrain {
     }
 
     private func respondOnDevice(_ question: String, tools specs: [EmberToolSpec]) async throws -> String {
-        let tools: [any Tool] = specs.compactMap { spec in
-            do { return try spec.deviceTool() } catch {
-                log.error("Tool \(spec.name, privacy: .public) has a bad schema: \(error.localizedDescription, privacy: .public)")
-                return nil
+        let names = specs.map(\.name)
+        let session: LanguageModelSession
+        if followsUp, let current = self.session, sessionTools == names, !current.isResponding {
+            session = current
+        } else {
+            let tools: [any Tool] = specs.compactMap { spec in
+                do { return try spec.deviceTool() } catch {
+                    log.error("Tool \(spec.name, privacy: .public) has a bad schema: \(error.localizedDescription, privacy: .public)")
+                    return nil
+                }
             }
+            // A follow-up whose topic changed: the earlier exchange goes in the instructions.
+            session = LanguageModelSession(tools: tools, instructions: EmberPrompt.instructions(recent: followsUp ? recent : []))
+            self.session = session
+            sessionTools = names
         }
-        let session = LanguageModelSession(tools: tools, instructions: EmberPrompt.instructions(recent: recent))
         do {
-            let reply = try await session.respond(to: question, options: GenerationOptions(temperature: 0.3)).content
+            let reply = try await session.respond(to: question, options: GenerationOptions(temperature: 0.2)).content
             return EmberPrompt.clean(reply)
         } catch let error as LanguageModelSession.GenerationError {
             if case .exceededContextWindowSize = error {
-                // Too much context: try once more without the recent conversation.
+                // The conversation filled the model's context: start fresh and ask again.
+                self.session = nil
+                let tools: [any Tool] = specs.compactMap { try? $0.deviceTool() }
                 let fresh = LanguageModelSession(tools: tools, instructions: EmberPrompt.instructions(recent: []))
+                self.session = fresh
                 return EmberPrompt.clean(try await fresh.respond(to: question).content)
             }
             throw error
@@ -403,6 +433,9 @@ enum EmberPrompt {
         - Never name someone's allergy; say a meal does or doesn't fit everyone.
         - If a tool says an app hasn't shared something, say why simply and what fixes it.
         - Never read out phone numbers, addresses or email addresses.
+        - Use only the tools that fit the request. Never bring up an app or offer to open one that the request isn't about.
+        - If no tool fits, answer from what you know in a sentence or two, or say plainly that you can't do that yet. Don't offer something else instead.
+        - For places, say only what the tool found. You don't know ratings or reviews.
         """
         let remembered = EmberSettings.shared.remembered
         if !remembered.isEmpty {

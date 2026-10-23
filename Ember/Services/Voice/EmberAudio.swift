@@ -1,70 +1,41 @@
 import AVFoundation
-import CoreMedia
 import Foundation
-import Observation
 import os
 import OSLog
-import Speech
 
-// The microphone and Ember's voice share one audio engine, with echo cancellation so Ember's own
-// voice is removed from what the microphone hears and you can talk over it (barge-in). Adapted
-// from BigTable's AskSpeech.swift.
+// The microphone and Ember's voice on one audio engine, with Apple's voice processing on, the
+// same as Ask Suffice and Sated's Coach (Suffice/Services/Voice/Conversation.swift). Because the
+// voice plays through the engine that records, voice processing removes it from what the
+// microphone hears: you can talk over Ember and be heard, and its own voice never reaches the
+// recognizer. It also suppresses background noise and honors the system Voice Isolation mode
+// (Control Center › Mic Mode).
 //
-// Two ways to cancel the echo, picked per iPhone:
-// - Echo-cancelled input (iPhones that support it): the session stays in its default mode, so
-//   Ember's voice plays through the media path at full quality, and the system cleans the
-//   microphone. Preferred.
-// - Voice processing (all others): the call path. Barge-in works the same, but the voice sounds
-//   like a phone call: narrower and quieter.
+// Typed questions don't open the microphone: their answers play through the speaker's own engine
+// (EmberSpeaker) with a playback session.
 
 // MARK: - Audio session
 
 /// Every change to the shared audio session goes through one serial queue, off the main thread
 /// (activating blocks), so a late "deactivate" can never land after the next "activate".
 nonisolated enum EmberAudioSession {
-    private static let queue = DispatchQueue(label: "com.stephenwarren.ember.audio")
+    private static let queue = DispatchQueue(label: "com.stephenwarren.ember.audiosession")
 
-    /// The microphone and the spoken replies at once, through voice processing. Speaker by
-    /// default, so the conversation isn't stuck in the earpiece; headsets work too.
-    /// Returns whether the system cleans the microphone itself (echo-cancelled input); when it
-    /// doesn't, the engine turns on voice processing.
-    static func activateForConversation() async throws -> Bool {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, Error>) in
-            queue.async {
-                do {
-                    let session = AVAudioSession.sharedInstance()
-                    if session.isEchoCancelledInputAvailable {
-                        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP, .duckOthers])
-                        try session.setPrefersEchoCancelledInput(true)
-                        try session.setActive(true, options: .notifyOthersOnDeactivation)
-                        aimMicrophoneForward(session)
-                        continuation.resume(returning: session.isEchoCancelledInputEnabled)
-                    } else {
-                        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers])
-                        try session.setActive(true, options: .notifyOthersOnDeactivation)
-                        continuation.resume(returning: false)
-                    }
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
+    /// For answers to typed questions: playback only.
+    static func activateForPlayback() async throws {
+        try await run {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .spokenAudio, options: .duckOthers)
+            try session.setActive(true)
         }
     }
 
-    /// On the iPhone's own microphones, listens with the front one in a cardioid pattern: it hears
-    /// the person facing the screen and turns down voices behind and beside the phone. Headsets
-    /// and microphones without a front pattern are left alone.
-    private static func aimMicrophoneForward(_ session: AVAudioSession) {
-        guard let builtIn = session.availableInputs?.first(where: { $0.portType == .builtInMic }),
-              session.currentRoute.inputs.contains(where: { $0.portType == .builtInMic }),
-              let front = builtIn.dataSources?.first(where: { $0.orientation == .front }),
-              front.supportedPolarPatterns?.contains(.cardioid) == true else { return }
-        do {
-            try front.setPreferredPolarPattern(.cardioid)
-            try builtIn.setPreferredDataSource(front)
-            try session.setPreferredInput(builtIn)
-        } catch {
-            Logger(subsystem: "com.stephenwarren.ember", category: "audio").notice("Couldn't aim the microphone: \(error.localizedDescription, privacy: .public)")
+    /// For talking with Ember: the microphone and the voice at once, through voice processing.
+    /// Speaker by default, so the conversation isn't stuck in the earpiece; headsets work too.
+    static func activateForConversation() async throws {
+        try await run {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers])
+            try session.setActive(true, options: .notifyOthersOnDeactivation)
         }
     }
 
@@ -74,6 +45,19 @@ nonisolated enum EmberAudioSession {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }
     }
+
+    private static func run(_ work: @escaping @Sendable () throws -> Void) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            queue.async {
+                do {
+                    try work()
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
 }
 
 nonisolated enum EmberVoiceError: Error {
@@ -81,30 +65,214 @@ nonisolated enum EmberVoiceError: Error {
     case unsupportedLanguage
 }
 
-// MARK: - Audio thread helpers
+// MARK: - The conversation engine
 
-/// Where microphone audio goes. Called on the audio thread.
-nonisolated final class EmberMicrophoneTap: @unchecked Sendable {
+final class EmberAudio {
+    static let shared = EmberAudio()
+
+    /// The format Ember's voice plays in: Kokoro's 24 kHz mono. The system voice is converted to it.
+    nonisolated static let playbackFormat = AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1)!
+
+    let player = AVAudioPlayerNode()
+    private(set) var isRunning = false
+    /// Whether echo cancellation is on (it isn't in the Simulator).
+    private(set) var hasVoiceProcessing = false
+
+    private let engine = AVAudioEngine()
+    private var attached = false
+    private var isStarting = false
+    /// Microphone audio goes here, on the audio thread.
     private let sink = OSAllocatedUnfairLock<(@Sendable (AVAudioPCMBuffer) -> Void)?>(initialState: nil)
+    /// When the microphone last delivered real sound (not digital silence), from the audio thread.
+    private let lastSignal = OSAllocatedUnfairLock(initialState: Date.distantPast)
+    private var configurationObserver: NSObjectProtocol?
+    private var watchdog: Task<Void, Never>?
+    private let log = Logger(subsystem: "com.stephenwarren.ember", category: "audio")
 
-    func setSink(_ new: (@Sendable (AVAudioPCMBuffer) -> Void)?) {
-        sink.withLock { $0 = new }
-    }
-
-    func deliver(_ buffer: AVAudioPCMBuffer) {
-        sink.withLock { $0 }?(buffer)
-    }
-
-    /// (Re)installs the tap in the microphone's current format. False when there's no
-    /// microphone input (installing a tap then would crash).
-    static func install(on input: AVAudioInputNode, tap: EmberMicrophoneTap) -> Bool {
-        input.removeTap(onBus: 0)
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else { return false }
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-            tap.deliver(buffer)
+    private init() {
+        // Switching the session to two-way voice (and turning on echo cancellation) reconfigures
+        // the hardware a moment after the engine starts, which stops the engine. The first
+        // conversation after launch always hits this; restart instead of going deaf.
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.restart(reason: "the audio configuration changed", full: false, attempt: 1) }
         }
+    }
+
+    /// Opens the microphone and Ember's voice. `input` receives microphone audio on a
+    /// background thread.
+    func start(input: @escaping @Sendable (AVAudioPCMBuffer) -> Void) async throws {
+        sink.withLock { $0 = input }
+        guard !isRunning, !isStarting else { return }
+        isStarting = true
+        defer { isStarting = false }
+        try await EmberAudioSession.activateForConversation()
+        do {
+            try startEngine()
+        } catch {
+            engine.inputNode.removeTap(onBus: 0)
+            EmberAudioSession.deactivate()
+            throw error
+        }
+        isRunning = true
+        watchMicrophone()
+    }
+
+    /// Plays the voice player (only while the engine runs; playing a node otherwise crashes).
+    func playVoice() -> Bool {
+        guard isRunning, engine.isRunning else { return false }
+        player.play()
         return true
+    }
+
+    private func startEngine() throws {
+        let microphone = engine.inputNode
+        #if !targetEnvironment(simulator)
+        do {
+            try microphone.setVoiceProcessingEnabled(true)
+            // Ember shouldn't hush other audio more than it has to.
+            microphone.voiceProcessingOtherAudioDuckingConfiguration = .init(enableAdvancedDucking: true, duckingLevel: .min)
+            hasVoiceProcessing = true
+        } catch {
+            log.error("Voice processing unavailable: \(error.localizedDescription, privacy: .public)")
+        }
+        #endif
+        if !attached {
+            engine.attach(player)
+            engine.connect(player, to: engine.mainMixerNode, format: Self.playbackFormat)
+            attached = true
+        }
+        try tapMicrophone()
+        engine.prepare()
+        try engine.start()
+    }
+
+    /// (Re)installs the tap in the microphone's current format, which can change when the
+    /// hardware is reconfigured.
+    private func tapMicrophone() throws {
+        let microphone = engine.inputNode
+        microphone.removeTap(onBus: 0)
+        let format = microphone.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else { throw EmberVoiceError.noMicrophone }
+        Self.installTap(on: microphone, format: format, sink: sink, lastSignal: lastSignal)
+    }
+
+    /// Restarts after the engine stopped on its own, or went silent. `full` also resets echo
+    /// cancellation, which on some first starts delivers nothing but zeros.
+    private func restart(reason: String, full: Bool, attempt: Int) {
+        guard isRunning, !isStarting else { return }
+        log.notice("Restarting the microphone: \(reason, privacy: .public)")
+        if full || !engine.isRunning { engine.stop() }
+        if full, hasVoiceProcessing {
+            engine.inputNode.removeTap(onBus: 0)
+            try? engine.inputNode.setVoiceProcessingEnabled(false)
+            hasVoiceProcessing = false
+        }
+        do {
+            if full {
+                try startEngine()
+            } else {
+                try tapMicrophone()
+                if !engine.isRunning {
+                    engine.prepare()
+                    try engine.start()
+                }
+            }
+        } catch {
+            log.error("Couldn't restart the microphone: \(error.localizedDescription, privacy: .public)")
+        }
+        watchMicrophone(attempt: attempt)
+    }
+
+    /// If no real sound comes in soon after starting, starts over: first just the engine, then
+    /// with a full reset. After that it stops trying (the microphone may be in use elsewhere).
+    private func watchMicrophone(attempt: Int = 1) {
+        watchdog?.cancel()
+        guard attempt <= 2 else { return }
+        let started = Date.now
+        watchdog = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(1200))
+            guard !Task.isCancelled, let self, self.isRunning else { return }
+            if self.lastSignal.withLock({ $0 }) > started { return }
+            self.log.notice("No microphone audio after starting (attempt \(attempt))")
+            self.restart(reason: "no sound from the microphone", full: attempt == 2, attempt: attempt + 1)
+        }
+    }
+
+    func stop() {
+        sink.withLock { $0 = nil }
+        watchdog?.cancel()
+        watchdog = nil
+        guard isRunning else { return }
+        player.stop()
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        #if !targetEnvironment(simulator)
+        if hasVoiceProcessing {
+            try? engine.inputNode.setVoiceProcessingEnabled(false)
+            hasVoiceProcessing = false
+        }
+        #endif
+        isRunning = false
+        EmberAudioSession.deactivate()
+    }
+
+    /// The tap runs on the audio thread, so it's built outside the main actor.
+    private nonisolated static func installTap(on input: AVAudioInputNode, format: AVAudioFormat,
+                                               sink: OSAllocatedUnfairLock<(@Sendable (AVAudioPCMBuffer) -> Void)?>,
+                                               lastSignal: OSAllocatedUnfairLock<Date>) {
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+            if hasSound(buffer) { lastSignal.withLock { $0 = .now } }
+            sink.withLock { $0 }?(buffer)
+        }
+    }
+
+    /// Real microphones always pick up a little noise; exact zeros mean no audio is flowing.
+    private nonisolated static func hasSound(_ buffer: AVAudioPCMBuffer) -> Bool {
+        guard let samples = buffer.floatChannelData?[0] else { return true }
+        let count = Int(buffer.frameLength)
+        var index = 0
+        while index < count {
+            if samples[index] != 0 { return true }
+            index += 8
+        }
+        return false
+    }
+
+    /// Shows the system Mic Mode menu (Standard, Voice Isolation, Wide Spectrum).
+    static func showMicrophoneModes() {
+        AVCaptureDevice.showSystemUserInterface(.microphoneModes)
+    }
+
+    /// The microphone mode the person picked in Control Center.
+    static var microphoneModeName: String {
+        switch AVCaptureDevice.activeMicrophoneMode {
+        case .voiceIsolation: "Voice Isolation"
+        case .wideSpectrum: "Wide Spectrum"
+        default: "Standard"
+        }
+    }
+}
+
+/// The microphone's loudness, 0...1, written on the audio thread about 30 times a second. The
+/// animations read it each frame; nothing hops to the main thread for it.
+nonisolated enum EmberMicLevel {
+    private static let last = OSAllocatedUnfairLock(initialState: Date.distantPast)
+
+    static func report(_ buffer: AVAudioPCMBuffer) {
+        let now = Date.now
+        let due = last.withLock { last -> Bool in
+            guard now.timeIntervalSince(last) > 0.033 else { return false }
+            last = now
+            return true
+        }
+        guard due, let samples = buffer.floatChannelData?[0] else { return }
+        let count = Int(buffer.frameLength)
+        guard count > 0 else { return }
+        var sum: Float = 0
+        for index in 0..<count { sum += samples[index] * samples[index] }
+        EmberLevelMeter.shared.value = min(Double((sum / Float(count)).squareRoot()) * 12, 1)
     }
 }
 
@@ -147,215 +315,3 @@ nonisolated final class EmberPCMConverter: @unchecked Sendable {
         return output
     }
 }
-
-/// Feeds microphone audio to the speech analyzer (converted to its format) and keeps a short
-/// loudness history on the analyzer's own timeline, on the audio thread.
-///
-/// The history is how Ember tells the person holding the phone from the rest of the room: speech
-/// from a foot away is far louder than the room's background (the TV, other people talking
-/// across the room). Each recognized phrase comes with its time range, so Ember can ask how far
-/// above the background it was (`loudness(from:to:)`) and drop what came from across the room.
-nonisolated final class EmberMicrophoneFeed: @unchecked Sendable {
-    private let continuation: AsyncStream<AnalyzerInput>.Continuation
-    private let converter: EmberPCMConverter
-    private let onLevel: @Sendable (Double) -> Void
-    private let muted = OSAllocatedUnfairLock(initialState: false)
-    private let lastLevel = OSAllocatedUnfairLock(initialState: Date.distantPast)
-
-    /// One buffer's loudness, placed on the analyzer's timeline.
-    struct Slice {
-        var start: Double
-        var end: Double
-        /// dBFS.
-        var db: Double
-        /// The room's background then, dBFS.
-        var floor: Double
-    }
-
-    private struct History {
-        /// Seconds of audio given to the analyzer so far (its timeline).
-        var time: Double = 0
-        var floor: Double = -60
-        var slices: [Slice] = []
-    }
-
-    private let history = OSAllocatedUnfairLock(initialState: History())
-
-    init(continuation: AsyncStream<AnalyzerInput>.Continuation, converter: EmberPCMConverter, onLevel: @escaping @Sendable (Double) -> Void) {
-        self.continuation = continuation
-        self.converter = converter
-        self.onLevel = onLevel
-    }
-
-    func setMuted(_ value: Bool) {
-        muted.withLock { $0 = value }
-    }
-
-    func handle(_ buffer: AVAudioPCMBuffer) {
-        guard !muted.withLock({ $0 }) else { return }
-        let db = Self.dbfs(buffer)
-        reportLevel(db)
-        guard let converted = converter.convert(buffer) else { return }
-        let seconds = Double(converted.frameLength) / converted.format.sampleRate
-        history.withLock { state in
-            // The background: drops quickly to quiet moments, rises slowly through speech. It
-            // starts no louder than a quiet room, so speech in the first moment isn't taken
-            // for the background.
-            if state.slices.isEmpty { state.floor = min(db, -45) }
-            state.floor = db < state.floor ? max(db, state.floor - 3) : min(state.floor + 0.04, db)
-            state.slices.append(Slice(start: state.time, end: state.time + seconds, db: db, floor: state.floor))
-            state.time += seconds
-            // Keep the last 60 seconds.
-            if state.slices.count > 3000 { state.slices.removeFirst(state.slices.count - 3000) }
-        }
-        continuation.yield(AnalyzerInput(buffer: converted))
-    }
-
-    func finish() {
-        continuation.finish()
-    }
-
-    /// How far above the room's background the loudest part of a stretch was, in dB, and the
-    /// loudest level itself. Nil when the stretch is older than the history.
-    func loudness(from start: Double, to end: Double) -> (aboveFloor: Double, peak: Double)? {
-        history.withLock { state in
-            let inRange = state.slices.filter { $0.end > start && $0.start < end }
-            guard !inRange.isEmpty else { return nil }
-            // The 90th percentile, so a single click doesn't count as speech.
-            let above = inRange.map { $0.db - $0.floor }.sorted()
-            let peaks = inRange.map(\.db).sorted()
-            let index = min(above.count - 1, Int(Double(above.count) * 0.9))
-            return (above[index], peaks[index])
-        }
-    }
-
-    /// The room's background now, dBFS.
-    var floor: Double { history.withLock { $0.floor } }
-
-    private static func dbfs(_ buffer: AVAudioPCMBuffer) -> Double {
-        guard let samples = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return -100 }
-        let count = Int(buffer.frameLength)
-        var sum: Float = 0
-        for index in 0..<count { sum += samples[index] * samples[index] }
-        let rms = Double((sum / Float(count)).squareRoot())
-        return 20 * log10(max(rms, 0.00001))
-    }
-
-    /// About 20 times a second, for the orb: 0...1.
-    private func reportLevel(_ db: Double) {
-        let now = Date.now
-        let due = lastLevel.withLock { last -> Bool in
-            guard now.timeIntervalSince(last) > 0.05 else { return false }
-            last = now
-            return true
-        }
-        guard due else { return }
-        // -50 dBFS (quiet room) to -10 dBFS (close, loud speech).
-        onLevel(min(max((db + 50) / 40, 0), 1))
-    }
-}
-
-// MARK: - Audio engine
-
-/// The microphone and Ember's voice on one engine with voice processing (echo cancellation
-/// and noise suppression), for the hands-free voice screen.
-final class EmberAudio {
-    static let shared = EmberAudio()
-
-    /// The format Ember's voice plays in: Kokoro's 24 kHz mono. The system voice is converted to it.
-    nonisolated static let playbackFormat = AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1)!
-
-    let player = AVAudioPlayerNode()
-    private(set) var isRunning = false
-    /// The system cancels the echo (full-quality playback); otherwise voice processing does.
-    private(set) var systemEchoCancellation = false
-
-    private let engine = AVAudioEngine()
-    private let tap = EmberMicrophoneTap()
-    private var attached = false
-    private var configurationObserver: NSObjectProtocol?
-    private let log = Logger(subsystem: "com.stephenwarren.ember", category: "audio")
-
-    private init() {
-        // Switching to two-way voice reconfigures the hardware a moment after the engine
-        // starts, which stops the engine. Start it again instead of going deaf.
-        configurationObserver = NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.restart() }
-        }
-    }
-
-    /// Opens the microphone (its audio goes to `sink`, on the audio thread) and the speaker.
-    func start(sink: @escaping @Sendable (AVAudioPCMBuffer) -> Void) async throws {
-        tap.setSink(sink)
-        guard !isRunning else { return }
-        systemEchoCancellation = try await EmberAudioSession.activateForConversation()
-        log.notice("Echo cancellation: \(self.systemEchoCancellation ? "system (media path)" : "voice processing", privacy: .public)")
-        do {
-            try startEngine()
-        } catch {
-            engine.inputNode.removeTap(onBus: 0)
-            if engine.isRunning { engine.stop() }
-            EmberAudioSession.deactivate()
-            throw error
-        }
-        isRunning = true
-    }
-
-    private func startEngine() throws {
-        let input = engine.inputNode
-        #if !targetEnvironment(simulator)
-        if !systemEchoCancellation {
-            do {
-                try input.setVoiceProcessingEnabled(true)
-            } catch {
-                log.error("Voice processing unavailable: \(error.localizedDescription, privacy: .public)")
-            }
-        }
-        #endif
-        if !attached {
-            engine.attach(player)
-            engine.connect(player, to: engine.mainMixerNode, format: Self.playbackFormat)
-            attached = true
-        }
-        guard EmberMicrophoneTap.install(on: input, tap: tap) else { throw EmberVoiceError.noMicrophone }
-        engine.prepare()
-        try engine.start()
-    }
-
-    /// After the hardware changed: the tap again (the format may have changed) and the engine.
-    private func restart() {
-        guard isRunning else { return }
-        log.notice("Restarting the microphone after an audio configuration change")
-        guard EmberMicrophoneTap.install(on: engine.inputNode, tap: tap) else { return }
-        guard !engine.isRunning else { return }
-        engine.prepare()
-        do {
-            try engine.start()
-        } catch {
-            log.error("Couldn't restart the microphone: \(error.localizedDescription, privacy: .public)")
-        }
-    }
-
-    /// Plays the voice player (only while the engine runs; playing a node otherwise crashes).
-    func playVoice() -> Bool {
-        guard isRunning, engine.isRunning else { return false }
-        player.play()
-        return true
-    }
-
-    func stop() {
-        tap.setSink(nil)
-        guard isRunning else { return }
-        player.stop()
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        #if !targetEnvironment(simulator)
-        if !systemEchoCancellation { try? engine.inputNode.setVoiceProcessingEnabled(false) }
-        #endif
-        isRunning = false
-        EmberAudioSession.deactivate()
-    }
-}
-

@@ -42,7 +42,9 @@ nonisolated enum EmberContactSearch {
         for suffix in ["'s cell", "’s cell", "'s phone", "’s phone", "'s mobile", "’s mobile"] where text.hasSuffix(suffix) {
             text = String(text.dropLast(suffix.count))
         }
-        return text.trimmingCharacters(in: .whitespaces)
+        // "Kristen." or "Kristen?" as the model or the recognizer wrote it.
+        text = text.trimmingCharacters(in: .whitespaces.union(.punctuationCharacters))
+        return text
     }
 
     /// Whether this is a relationship ("mom", "my wife"), which only Contacts can answer: never
@@ -55,9 +57,19 @@ nonisolated enum EmberContactSearch {
         let store = CNContactStore()
         let name = plain(spoken)
         guard !name.isEmpty else { return [] }
+        // Each key once (a key asked for twice can make Contacts refuse the fetch).
+        var allKeys: [CNKeyDescriptor] = []
+        var seenKeys = Set<String>()
         let extra: [CNKeyDescriptor] = [CNContactNicknameKey as CNKeyDescriptor, CNContactGivenNameKey as CNKeyDescriptor,
-                                        CNContactFamilyNameKey as CNKeyDescriptor, CNContactRelationsKey as CNKeyDescriptor]
-        let allKeys = keys + extra
+                                        CNContactFamilyNameKey as CNKeyDescriptor, CNContactMiddleNameKey as CNKeyDescriptor,
+                                        CNContactOrganizationNameKey as CNKeyDescriptor, CNContactRelationsKey as CNKeyDescriptor]
+        for key in keys + extra {
+            if let name = key as? String {
+                if seenKeys.insert(name).inserted { allKeys.append(key) }
+            } else {
+                allKeys.append(key)
+            }
+        }
 
         // 1 and 2: the name or nickname as said ("Mom" saved as a name or nickname wins).
         var found = (try? store.unifiedContacts(matching: CNContact.predicateForContacts(matchingName: name), keysToFetch: allKeys)) ?? []
@@ -65,6 +77,20 @@ nonisolated enum EmberContactSearch {
         try? store.enumerateContacts(with: CNContactFetchRequest(keysToFetch: allKeys)) { contact, _ in everyone.append(contact) }
         let nicknamed = everyone.filter { $0.nickname.lowercased() == name }
         if !nicknamed.isEmpty { found = nicknamed + found.filter { candidate in !nicknamed.contains { $0.identifier == candidate.identifier } } }
+        if found.isEmpty, relations[name] == nil {
+            // Contacts' own name search missed (an accent, a middle name, "Kris" for Kristen):
+            // look through everyone, first names first.
+            let wanted = fold(name)
+            let words = wanted.split(separator: " ").map(String.init)
+            found = everyone.filter { contact in
+                let first = fold(contact.givenName), last = fold(contact.familyName), nick = fold(contact.nickname)
+                let full = [first, fold(contact.middleName), last].filter { !$0.isEmpty }.joined(separator: " ")
+                let org = fold(contact.organizationName)
+                if full == wanted || first == wanted || nick == wanted || org == wanted { return true }
+                if words.count >= 2 { return first == words[0] && last.hasPrefix(words.last ?? "") }
+                return first.hasPrefix(wanted) && wanted.count >= 3
+            }
+        }
         if !found.isEmpty, relations[name] == nil { return found }
         if !nicknamed.isEmpty { return nicknamed }
 
@@ -87,6 +113,11 @@ nonisolated enum EmberContactSearch {
             for match in matches where !related.contains(where: { $0.identifier == match.identifier }) { related.append(match) }
         }
         return related.isEmpty ? found : related
+    }
+
+    private static func fold(_ text: String) -> String {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .trimmingCharacters(in: .whitespaces)
     }
 
     /// Asks for Contacts once; false when it's not allowed.

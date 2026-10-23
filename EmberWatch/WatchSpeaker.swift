@@ -1,4 +1,5 @@
 import AVFoundation
+import Observation
 import OSLog
 
 // The Watch's voice. The Watch can't run Kokoro, so answers are spoken by the cloud voice
@@ -11,19 +12,27 @@ import OSLog
 // stays on the built-in voice, so it never switches voices mid-answer.
 
 @MainActor
+@Observable
 final class WatchSpeaker: NSObject {
     /// The cloud voice's name ("Aoede"); nil uses the built-in voice only.
-    var cloudVoice: String?
+    @ObservationIgnored var cloudVoice: String?
+    /// Something is being said (for the speaking animation).
+    private(set) var isSpeaking = false
 
-    private let synthesizer = AVSpeechSynthesizer()
-    private var player: AVAudioPlayer?
+    @ObservationIgnored private let synthesizer = AVSpeechSynthesizer()
+    @ObservationIgnored private var player: AVAudioPlayer?
     /// Sentences waiting to play, each with its audio on the way (nil audio: built-in voice).
-    private var pending: [(text: String, audio: Task<Data?, Never>?)] = []
-    private var isPlaying = false
-    private var usesSystemVoice = false
-    private var generation = 0
-    private let client = EmberCloudClient(baseURL: EmberEndpoints.apiBaseURL)
-    private let log = Logger(subsystem: "com.stephenwarren.ember.watch", category: "voice")
+    @ObservationIgnored private var pending: [(text: String, audio: Task<Data?, Never>?)] = []
+    @ObservationIgnored private var isPlaying = false
+    @ObservationIgnored private var usesSystemVoice = false
+    @ObservationIgnored private var generation = 0
+    @ObservationIgnored private let client = EmberCloudClient(baseURL: EmberEndpoints.apiBaseURL)
+    @ObservationIgnored private let log = Logger(subsystem: "com.stephenwarren.ember.watch", category: "voice")
+
+    override init() {
+        super.init()
+        synthesizer.delegate = self
+    }
 
     /// A new answer: whatever was playing stops.
     func begin() {
@@ -48,6 +57,7 @@ final class WatchSpeaker: NSObject {
             return try? await client.speak(text, voice: voice, accessToken: token)
         }
         pending.append((text, audio))
+        isSpeaking = true
         if !isPlaying { playNext() }
     }
 
@@ -67,6 +77,7 @@ final class WatchSpeaker: NSObject {
         player?.stop()
         player = nil
         if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
+        isSpeaking = false
     }
 
     // MARK: Playing
@@ -74,6 +85,7 @@ final class WatchSpeaker: NSObject {
     private func playNext() {
         guard !pending.isEmpty else {
             isPlaying = false
+            if !synthesizer.isSpeaking { isSpeaking = false }
             return
         }
         isPlaying = true
@@ -106,7 +118,12 @@ final class WatchSpeaker: NSObject {
         playNext()
     }
 
+    fileprivate func systemVoiceFinished() {
+        if !synthesizer.isSpeaking, pending.isEmpty, !isPlaying { isSpeaking = false }
+    }
+
     private func speakWithSystemVoice(_ text: String) {
+        isSpeaking = true
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = Self.bestVoice
         synthesizer.speak(utterance)
@@ -124,6 +141,12 @@ final class WatchSpeaker: NSObject {
             .filter { $0.language.hasPrefix(language) }
             .max { $0.quality.rawValue < $1.quality.rawValue }
             ?? AVSpeechSynthesisVoice(language: Locale.current.identifier.replacingOccurrences(of: "_", with: "-"))
+    }
+}
+
+extension WatchSpeaker: AVSpeechSynthesizerDelegate {
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        Task { @MainActor in self.systemVoiceFinished() }
     }
 }
 

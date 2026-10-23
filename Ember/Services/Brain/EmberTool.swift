@@ -12,7 +12,7 @@ import FoundationModels
 // their tools: the small on-device model chooses well among a handful, badly among forty.
 
 nonisolated enum EmberDomain: String, CaseIterable, Codable, Sendable {
-    case money, meals, family, food, study, phone, general
+    case money, meals, family, food, study, phone, places, general
 
     /// Said in the classifier's instructions.
     var meaning: String {
@@ -22,7 +22,8 @@ nonisolated enum EmberDomain: String, CaseIterable, Codable, Sendable {
         case .family: "chores, approvals, the family calendar and events, allowance (Caloma)"
         case .food: "calories, protein, what someone ate, logging food (Sated)"
         case .study: "scripture reading and study plans (Hearken)"
-        case .phone: "calling, texting or emailing someone, reminders, timers, alarms, the person's own calendar, directions"
+        case .phone: "calling, texting or emailing someone, reminders, timers, alarms, the person's own calendar"
+        case .places: "finding restaurants, stores, businesses or anything nearby, directions, hours and phone numbers of places"
         case .general: "general knowledge or small talk, nothing from the family's apps"
         }
     }

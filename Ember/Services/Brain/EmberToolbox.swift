@@ -45,6 +45,9 @@ struct EmberCard: Identifiable {
     /// Opens the thing in its app.
     var link: URL?
     var actionTitle: String?
+    /// A second button beside the first (a place: Directions, then Call).
+    var secondaryLink: URL?
+    var secondaryTitle: String?
     /// Opened for them once Ember has finished speaking (a call: the system still asks first).
     var opensWhenSpoken = false
 }
@@ -81,11 +84,23 @@ final class EmberToolbox {
 
     private lazy var all: [EmberToolSpec] = makeTools()
 
-    /// Tools for these domains that the person allows (What Ember Knows).
-    func tools(for domains: Set<EmberDomain>) -> [EmberToolSpec] {
-        all.filter { spec in
-            !spec.domains.isDisjoint(with: domains.union([.general]))
-                && (spec.app.map { EmberSettings.shared.canRead($0) } ?? true)
+    /// Tools for these domains that the person allows (What Ember Knows). The general tools
+    /// (remember, forget, open an app) are offered only when the question asks for them: offered
+    /// every turn, the small model reached for "open Hearken" when asked for restaurants.
+    func tools(for domains: Set<EmberDomain>, question: String? = nil) -> [EmberToolSpec] {
+        let text = (question ?? "").lowercased()
+        return all.filter { spec in
+            guard spec.app.map({ EmberSettings.shared.canRead($0) }) ?? true else { return false }
+            if !spec.domains.isDisjoint(with: domains.subtracting([.general])) { return true }
+            guard spec.domains.contains(.general) else { return false }
+            guard question != nil else { return true }
+            switch spec.name {
+            case "remember": return text.contains("remember") || text.contains("don't forget") || text.contains("note that")
+            case "forget": return text.contains("forget")
+            case "open_app": return text.contains("open ") || text.contains("take me to")
+            case "household_people": return domains.contains(.general)
+            default: return false
+            }
         }
     }
 
@@ -259,6 +274,13 @@ final class EmberToolbox {
                           domains: [.study], app: .hearken) { [unowned self] _ in studyToday() },
 
             // Phone
+            EmberToolSpec(name: "find_places", description: "Finds restaurants, stores or any kind of place near them (or in a town they name) on Apple Maps, closest first, with buttons for directions and calling. Use for \"find\", \"where's a good…\", \"anything nearby\".",
+                          domains: [.places], params: [
+                            .text("query", "What to look for, in their words: \"good restaurants\", \"coffee\", \"a pharmacy\", \"Mexican food\"."),
+                            .text("near", "The town or area they named, or empty for near them.", optional: true),
+                          ]) { [unowned self] args in
+                await findPlaces(args.text("query"), near: args.text("near"))
+            },
             EmberToolSpec(name: "place_call", description: "Calls a person from Contacts or a business from Apple Maps near them (a named town means the nearest town by that name). One match: the call screen opens and they tap Call. Several: it lists them so you can ask which.",
                           domains: [.phone], params: [
                             .text("who", "Who to call: a person or a business, as they said it."),
@@ -317,7 +339,7 @@ final class EmberToolbox {
                 await addMyEvent(title: args.text("title"), when: args.text("when"), minutes: args.number("minutes"), location: args.text("location"))
             },
             EmberToolSpec(name: "directions", description: "Opens Apple Maps with directions to a place near them.",
-                          domains: [.phone], params: [.text("place", "Where to, as they said it.")]) { [unowned self] args in
+                          domains: [.phone, .places], params: [.text("place", "Where to, as they said it.")]) { [unowned self] args in
                 await directions(args.text("place"))
             },
         ]
@@ -780,6 +802,32 @@ final class EmberToolbox {
         cards.append(EmberCard(app: app, kind: .handoff(title: title, detail: detail, symbol: "arrow.up.forward.app"),
                                link: url, actionTitle: "Open \(app.displayName)"))
         return "A button to open \(app.displayName) is ready. Say it's ready to open; don't say it's done."
+    }
+
+    // MARK: Places
+
+    func findPlaces(_ query: String, near: String) async -> String {
+        switch await EmberCallFinder.search(query, near: near) {
+        case .success(let places):
+            for place in places.prefix(4) {
+                cards.append(EmberCard(app: nil, kind: .call(name: place.name, detail: place.detail, logo: place.logo),
+                                       link: place.maps, actionTitle: "Directions",
+                                       secondaryLink: place.callURL, secondaryTitle: place.callURL == nil ? nil : "Call"))
+            }
+            let list = places.enumerated().map { index, place in
+                "\(index + 1). \(place.name)\(place.category.map { " (\($0))" } ?? "")\(place.street.map { " on \($0)" } ?? "")\(place.miles.map { String(format: ", %.1f miles away", $0) } ?? "")"
+            }.joined(separator: "\n")
+            return """
+            Apple Maps found, closest first:
+            \(list)
+            The screen shows them with Directions and Call buttons. Name the two or three closest in one or two short sentences. \
+            Apple Maps has no ratings, so don't say which is best or invent reviews; if they asked for "good" ones, say these are the closest.
+            """
+        case .failure(.needsLocation):
+            return "Ember needs Location to search near them. Reply in one short sentence: say the town, or allow Location for Ember in Settings."
+        case .failure:
+            return "Apple Maps found nothing for \(query)\(near.isEmpty ? " nearby" : " in \(near)"). Say so in one short sentence."
+        }
     }
 
     // MARK: Phone

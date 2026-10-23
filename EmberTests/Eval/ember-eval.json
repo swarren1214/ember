@@ -661,17 +661,17 @@
  },
  {
   "question": "Directions to Costco",
-  "domain": "phone",
+  "domain": "places",
   "tool": "directions"
  },
  {
   "question": "Navigate to the nearest gas station",
-  "domain": "phone",
+  "domain": "places",
   "tool": "directions"
  },
  {
   "question": "How do I get to Thanksgiving Point?",
-  "domain": "phone",
+  "domain": "places",
   "tool": "directions"
  },
  {

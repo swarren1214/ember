@@ -18,20 +18,37 @@ struct EmberCardView: View {
                 }
             }
             content
-            if let link = card.link, let title = card.actionTitle {
-                Button {
-                    openURL(link)
-                } label: {
-                    Label(title, systemImage: link.scheme == "tel" ? "phone.fill" : "arrow.up.forward")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(EmberTheme.text)
+            if card.link != nil || card.secondaryLink != nil {
+                HStack(spacing: 8) {
+                    if let link = card.link, let title = card.actionTitle {
+                        actionButton(title, link: link)
+                    }
+                    if let link = card.secondaryLink, let title = card.secondaryTitle {
+                        actionButton(title, link: link)
+                    }
                 }
-                .buttonStyle(.glass)
             }
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .emberGlass(cornerRadius: 26)
+    }
+
+    private func actionButton(_ title: String, link: URL) -> some View {
+        Button {
+            openURL(link)
+        } label: {
+            Label(title, systemImage: Self.symbol(for: link, title: title))
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(EmberTheme.text)
+        }
+        .buttonStyle(.glass)
+    }
+
+    private static func symbol(for link: URL, title: String) -> String {
+        if link.scheme == "tel" { return "phone.fill" }
+        if title == "Directions" { return "arrow.triangle.turn.up.right.diamond.fill" }
+        return "arrow.up.forward"
     }
 
     @ViewBuilder
