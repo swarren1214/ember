@@ -18,13 +18,15 @@ final class WatchModel: NSObject {
 
     enum Phase: Equatable {
         case face
+        /// The microphone is on (tap the orb to send, or just stop talking).
+        case listening
         case thinking(String)
         case answer(EmberWatchReply)
         case failed(String)
 
         static func == (lhs: Phase, rhs: Phase) -> Bool {
             switch (lhs, rhs) {
-            case (.face, .face): true
+            case (.face, .face), (.listening, .listening): true
             case (.thinking(let a), .thinking(let b)): a == b
             case (.answer(let a), .answer(let b)): a.id == b.id
             case (.failed(let a), .failed(let b)): a == b
@@ -39,13 +41,66 @@ final class WatchModel: NSObject {
     private(set) var isIPhoneReachable = true
 
     @ObservationIgnored private let speaker = WatchSpeaker()
+    @ObservationIgnored private let listener = WatchListener()
+    /// The Watch can listen by itself: Cloud Help with Claude is on and it's signed in. Without
+    /// that, tapping the orb opens the system's dictation instead.
+    private(set) var canListen = false
     @ObservationIgnored private let log = Logger(subsystem: "com.stephenwarren.ember.watch", category: "model")
 
     var glances: [EmberGlance] { context?.glances ?? [] }
     /// Ember is speaking (for the speaking animation).
     var isSpeaking: Bool { speaker.isSpeaking }
 
+    /// Checks whether the Watch can listen by itself (after launch, sign-in, or new settings).
+    func refreshAbilities() {
+        let context = context
+        Task { canListen = await WatchBrain.shared.canAnswer(context: context) }
+    }
+
+    /// Tap the orb: listen until the person pauses, have hearth-api write down what was said,
+    /// then answer it, the way listen mode works on the iPhone.
+    func listen() {
+        if case .listening = phase {
+            listener.finish()
+            return
+        }
+        speaker.stop()
+        phase = .listening
+        Task {
+            switch await listener.listen() {
+            case .heard(let pcm):
+                phase = .thinking("…")
+                do {
+                    let token = try await WatchAccount.shared.accessToken()
+                    let hints = (context?.people.map(\.name) ?? []) + ["Ember", "Suffice", "Caloma", "BigTable", "Sated", "Hearken"]
+                    let text = try await EmberCloudClient(baseURL: EmberEndpoints.apiBaseURL)
+                        .transcribe(pcm, sampleRate: Int(WatchListener.sampleRate), hints: hints, accessToken: token)
+                    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        phase = .failed("I didn’t catch that. Tap the orb and try again.")
+                    } else {
+                        ask(text)
+                    }
+                } catch {
+                    log.notice("Transcription failed: \(String(describing: error), privacy: .public)")
+                    phase = .failed("I couldn’t hear that just now. Check your connection and try again.")
+                }
+            case .silence:
+                phase = .face
+            case .cancelled:
+                phase = .face
+            case .failed(let message):
+                phase = .failed(message)
+            }
+        }
+    }
+
+    /// Stop listening without asking anything.
+    func cancelListening() {
+        listener.cancel()
+    }
+
     func start() {
+        refreshAbilities()
         guard WCSession.isSupported() else { return }
         WCSession.default.delegate = self
         WCSession.default.activate()
@@ -121,6 +176,7 @@ final class WatchModel: NSObject {
 
     fileprivate func received(_ context: EmberWatchContext) {
         self.context = context
+        refreshAbilities()
     }
 
     @ObservationIgnored private var unreachableSince: Task<Void, Never>?

@@ -28,6 +28,12 @@ nonisolated enum EmberMoneyPipeline {
 
     static func answer(_ request: EmberRequest, question: String, ledger: SufficeLedger, coverage: HearthMoney.Coverage? = nil,
                        now: Date = .now, calendar: Calendar = .current) -> Reply {
+        answer(request, question: question, book: ledger.book, coverage: coverage, now: now, calendar: calendar)
+    }
+
+    /// The same, from a book (Suffice's own copy on the iPhone, or the iCloud one).
+    static func answer(_ request: EmberRequest, question: String, book: HearthMoney.Book, coverage: HearthMoney.Coverage? = nil,
+                       now: Date = .now, calendar: Calendar = .current) -> Reply {
         let kind: HearthMoney.Ask.Kind
         let lean: EmberDates.Lean
         let fallback: String
@@ -61,7 +67,6 @@ nonisolated enum EmberMoneyPipeline {
 
         let ask = HearthMoney.Ask(kind: kind, span: span, said: when, person: request.who, budget: request.budgetWords,
                                   place: request.placeWords)
-        let book = ledger.book
         let reply = HearthMoney.answer(ask, book: book, coverage: coverage ?? HearthMoney.Coverage(book), now: now, calendar: calendar)
         return Reply(text: reply.text, card: reply.hasCard ? card(reply) : nil, asksBack: reply.asksBack)
     }

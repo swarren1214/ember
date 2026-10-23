@@ -149,7 +149,7 @@ struct EmberHomeView: View {
                     ForEach(Array(context.glances.enumerated()), id: \.element.id) { index, glance in
                         if index > 0 { Divider().padding(.leading, 60) }
                         Button {
-                            ask(Self.question(for: glance.app))
+                            ask(glance.question)
                         } label: {
                             HStack(spacing: 12) {
                                 EmberAppTile(app: glance.app, size: 32)

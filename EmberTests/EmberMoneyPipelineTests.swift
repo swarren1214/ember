@@ -176,7 +176,7 @@ struct EmberMoneyPipelineTests {
             entry(8, "Costco", 9000, groceries),
         ])
         let reply = answer(EmberRequest(intent: .spending, whenWords: "on October 10"), "How much did we spend on October 10?", ledger: old)
-        #expect(reply.text.contains("only through October 8"))
+        #expect(reply.text.contains("newest transaction I can see from Suffice is from October 8"))
         #expect(!reply.text.contains("$0"))
     }
 
@@ -187,7 +187,7 @@ struct EmberMoneyPipelineTests {
             entry(12, "Smith's", 4000, groceries),
         ])
         let reply = answer(EmberRequest(intent: .spending, whenWords: "this month"), "How much did we spend this month?", ledger: old)
-        #expect(reply.text.contains("only synced entries through October 12"))
+        #expect(reply.text.contains("I can only see transactions through October 12"))
     }
 
     // MARK: The request's copied words
@@ -209,6 +209,27 @@ struct EmberMoneyPipelineTests {
         #expect(next.intent == .spending)
         #expect(next.placeWords == "Costco")
         #expect(next.whenWords == "last month")
+    }
+
+    // MARK: Suffice's own copy on the iPhone
+
+    @Test func sufficesCopyRoundTrips() throws {
+        let book = ledger.book
+        let data = try JSONEncoder().encode(SufficeMoneyPublication(book: book))
+        let back = try JSONDecoder().decode(SufficeMoneyPublication.self, from: data).book
+        #expect(back.entries.count == book.entries.count)
+        let reply = EmberMoneyPipeline.answer(EmberRequest(intent: .spending, whenWords: "on October 10"), question: "How much did we spend on October 10?",
+                                              book: back, now: Self.now, calendar: Self.calendar)
+        #expect(reply.text.contains("$30.40"))
+    }
+
+    @Test func theNewerCopyWins() {
+        let mirror = ledger.book
+        var local = mirror
+        local.entries.removeAll { $0.date > day(15) }
+        #expect(SufficeMoney.best(local: local, mirror: mirror)?.source == .iCloud)
+        #expect(SufficeMoney.best(local: mirror, mirror: mirror)?.source == .suffice)
+        #expect(SufficeMoney.best(local: nil, mirror: mirror)?.source == .iCloud)
     }
 
     @Test func readsTheCloudsRequest() throws {

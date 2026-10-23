@@ -3,11 +3,14 @@ import SwiftUI
 
 // The Watch screens, from the "Ember Redesign" canvas:
 //
-//   Face      the orb (Liquid Glass with the living light) and one glance
-//   Thinking  the orb's colors swirl around its white heart
-//   Answer    the answer, spoken, with a small orb pulsing; at most two buttons; Done
+//   Face       the orb (Liquid Glass with the living light) and one glance
+//   Listening  the orb swells with your voice; stop talking (or tap it) and Ember answers
+//   Thinking   the orb's colors swirl around its white heart
+//   Answer     the answer, spoken, with a small orb pulsing; at most two buttons; Done
 //
-// The orb is the talk button: tapping it opens dictation, and what's said is sent when it closes.
+// The orb is the talk button. It listens the way the iPhone's listen mode does: no dictation
+// sheet, no Done. (Only without Cloud Help or a Watch sign-in does it fall back to the system's
+// dictation, since watchOS has no speech recognition of its own.)
 
 struct WatchRootView: View {
     @Environment(WatchModel.self) private var model
@@ -20,6 +23,7 @@ struct WatchRootView: View {
 
             switch model.phase {
             case .face: face
+            case .listening: listening
             case .thinking(let question): thinking(question)
             case .answer(let reply): answer(reply)
             case .failed(let message):
@@ -32,7 +36,43 @@ struct WatchRootView: View {
             }
         }
         .animation(.snappy, value: model.phase)
-        .task { signedIn = await WatchAccount.shared.isSignedIn }
+        .task {
+            signedIn = await WatchAccount.shared.isSignedIn
+            model.refreshAbilities()
+        }
+    }
+
+    /// The orb as a button: a filled circle under it, so the whole button takes the tap.
+    private func orbButton(_ mode: EmberOrb.Mode) -> some View {
+        ZStack {
+            Circle().fill(Color.black.opacity(0.001))
+            EmberOrb(mode: mode, size: 92)
+        }
+        .frame(width: 108, height: 108)
+        .contentShape(.circle)
+    }
+
+    // MARK: Listening
+
+    private var listening: some View {
+        VStack(spacing: 8) {
+            Button {
+                model.listen()
+            } label: {
+                orbButton(.listening)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Send")
+            .accessibilityHint("Stops listening and asks Ember.")
+            Text("Listening…")
+                .font(.headline)
+            Button("Cancel") { model.cancelListening() }
+                .font(.footnote)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
+        }
+        .transition(.opacity)
     }
 
     // MARK: Face
@@ -40,19 +80,24 @@ struct WatchRootView: View {
     private var face: some View {
         ScrollView {
             VStack(spacing: 8) {
-                TextFieldLink(prompt: Text("Ask Ember")) {
-                    // A filled circle under the orb, so the whole button takes the tap.
-                    ZStack {
-                        Circle().fill(Color.black.opacity(0.001))
-                        EmberOrb(mode: .idle, size: 92)
+                if model.canListen {
+                    Button {
+                        model.listen()
+                    } label: {
+                        orbButton(.idle)
                     }
-                    .frame(width: 108, height: 108)
-                    .contentShape(.circle)
-                } onSubmit: { text in
-                    model.ask(text)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Ask Ember")
+                    .accessibilityHint("Starts listening.")
+                } else {
+                    TextFieldLink(prompt: Text("Ask Ember")) {
+                        orbButton(.idle)
+                    } onSubmit: { text in
+                        model.ask(text)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Ask Ember")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Ask Ember")
 
                 Text("Tap to ask")
                     .font(.headline)
@@ -87,6 +132,7 @@ struct WatchRootView: View {
                         Task {
                             try? await WatchAccount.shared.signIn(identityToken: credential.identityToken, nonce: currentNonce)
                             signedIn = await WatchAccount.shared.isSignedIn
+                            model.refreshAbilities()
                         }
                     }
                     .frame(height: 40)
@@ -114,7 +160,7 @@ struct WatchRootView: View {
     private func thinking(_ question: String) -> some View {
         VStack(spacing: 14) {
             EmberOrb(mode: .thinking, size: 84)
-            Text("“\(question)”")
+            Text(question == "…" ? "Thinking…" : "“\(question)”")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

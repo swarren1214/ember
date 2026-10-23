@@ -67,13 +67,21 @@ final class EmberZone {
 
     /// The fields Ember reads and writes in this zone. Fetching only these leaves out Suffice's
     /// receipt images and Caloma's photos, which made a first fetch slow and the mirror large.
-    let desiredKeys: [CKRecord.FieldKey]?
+    private let fieldList: [CKRecord.FieldKey]?
+    /// Set when a fetch came back without the records' values: then every field is asked for.
+    private var fetchesEverything: Bool {
+        get { UserDefaults.standard.bool(forKey: "ember.zone.allKeys.\(zoneName)") }
+        set { UserDefaults.standard.set(newValue, forKey: "ember.zone.allKeys.\(zoneName)") }
+    }
+    var desiredKeys: [CKRecord.FieldKey]? { fetchesEverything ? nil : fieldList }
+    /// Repairs tried this launch (at most two).
+    private var repairs = 0
     /// Reading the saved mirror happens off the main thread; fetching waits for it.
     private var loading: Task<Void, Never>?
 
     init(zoneName: String) {
         self.zoneName = zoneName
-        self.desiredKeys = Self.fields[zoneName]
+        self.fieldList = Self.fields[zoneName]
         let url = Self.fileURL(for: zoneName)
         loading = Task { [weak self] in
             let saved = await Task.detached(priority: .userInitiated) { Self.read(url) }.value
@@ -166,6 +174,20 @@ final class EmberZone {
             }
             lastFetched = .now
             lastError = nil
+            // Records without their values (a mirror saved before Ember kept Suffice's sealed
+            // fields, or a fetch that left them out) read as budgets with no names and
+            // transactions with no dates: "nothing spent". Fetch the whole zone again, with
+            // every field, once.
+            // First a clean fetch; if the values are still missing, the field list is what's
+            // leaving them out, so every field from then on.
+            if repairs < 2, isMissingValues {
+                repairs += 1
+                log.notice("\(self.zoneName, privacy: .public): records came without their values; fetching everything again (\(self.repairs))")
+                if repairs == 2 { fetchesEverything = true }
+                forget()
+                await fetchChanges()
+                return
+            }
             // Nothing new: the file already has it (the token moving on alone isn't worth a write).
             if changed { save() }
         } catch let error as CKError where error.code == .changeTokenExpired {
@@ -180,6 +202,13 @@ final class EmberZone {
             log.error("\(self.zoneName, privacy: .public) fetch failed: \(error.localizedDescription, privacy: .public)")
             lastError = .failed(error.localizedDescription)
         }
+    }
+
+    /// Most records carry none of their fields: they can't be read.
+    private var isMissingValues: Bool {
+        guard records.count >= 3 else { return false }
+        let empty = records.values.filter { $0.encryptedValues.allKeys().isEmpty && $0.allKeys().isEmpty }.count
+        return empty * 2 > records.count
     }
 
     /// Throws the mirror away and fetches the whole zone again (Profile › iCloud Data).
@@ -266,6 +295,9 @@ final class EmberZone {
             if Task.isCancelled { return }
             let archiver = NSKeyedArchiver(requiringSecureCoding: true)
             archiver.encode(snapshot as NSArray, forKey: "records")
+            // A record's encrypted fields aren't kept when the record itself is archived, so
+            // they're written alongside it (the whole file is protected).
+            archiver.encode(Self.sealedValues(of: snapshot) as NSDictionary, forKey: "sealed")
             if let token { archiver.encode(token, forKey: "token") }
             archiver.encode(owner, forKey: "owner")
             archiver.finishEncoding()
@@ -287,7 +319,32 @@ final class EmberZone {
         let records = unarchiver.decodeObject(of: [NSArray.self, CKRecord.self], forKey: "records") as? [CKRecord] ?? []
         let token = unarchiver.decodeObject(of: CKServerChangeToken.self, forKey: "token")
         let owner = unarchiver.decodeObject(of: NSString.self, forKey: "owner") as String?
+        let sealed = unarchiver.decodeObject(of: [NSDictionary.self, NSString.self, NSNumber.self, NSDate.self, NSData.self],
+                                             forKey: "sealed") as? [String: [String: Any]] ?? [:]
+        for record in records {
+            guard let values = sealed[record.recordID.recordName], record.encryptedValues.allKeys().isEmpty else { continue }
+            for (key, value) in values { record.encryptedValues[key] = value as? CKRecordValue }
+        }
         return Saved(records: records, token: token, owner: owner)
+    }
+
+    /// Each record's encrypted fields as plain values, by record name.
+    nonisolated private static func sealedValues(of records: [CKRecord]) -> [String: [String: Any]] {
+        var result: [String: [String: Any]] = [:]
+        for record in records {
+            var values: [String: Any] = [:]
+            for key in record.encryptedValues.allKeys() {
+                switch record.encryptedValues[key] {
+                case let value as NSString: values[key] = value
+                case let value as NSNumber: values[key] = value
+                case let value as NSDate: values[key] = value
+                case let value as NSData: values[key] = value
+                default: break
+                }
+            }
+            if !values.isEmpty { result[record.recordID.recordName] = values }
+        }
+        return result
     }
 
     private func adopt(_ saved: Saved?) {

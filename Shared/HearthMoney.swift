@@ -4,7 +4,8 @@ import Foundation
 // they can never disagree. Canonical copy in ~/Developer/hearthkit; `bash sync.sh` copies it to
 // suffice/Suffice/Services/Hearth and ember/Shared. Edit it here, never in a copy.
 //
-//   Values     Entry, Category, Bill, Member: plain copies of Suffice's records
+//   Values     Entry, Category, Bill, Member: plain copies of Suffice's records. Codable: Suffice
+//              shares its Book with Ember on the iPhone (the app group's suffice.money.json)
 //   Math       which budgets count in a month, what's spent in each, when bills come due and
 //              whether they're paid (Suffice's BudgetMath calls these)
 //   Query      every purchase matching a period, person, budget or store, with totals
@@ -18,7 +19,7 @@ nonisolated enum HearthMoney {
 
     // MARK: - Values
 
-    nonisolated struct Part: Hashable, Sendable {
+    nonisolated struct Part: Hashable, Sendable, Codable {
         var categoryID: UUID?
         var amountCents: Int
 
@@ -28,7 +29,7 @@ nonisolated enum HearthMoney {
         }
     }
 
-    nonisolated struct Entry: Hashable, Sendable, Identifiable {
+    nonisolated struct Entry: Hashable, Sendable, Identifiable, Codable {
         var id: UUID
         var date: Date
         var payee: String
@@ -79,7 +80,7 @@ nonisolated enum HearthMoney {
         var spendingCents: Int { amountCents - min(max(stashCents, 0), amountCents) }
     }
 
-    nonisolated struct Category: Hashable, Sendable, Identifiable {
+    nonisolated struct Category: Hashable, Sendable, Identifiable, Codable {
         var id: UUID
         var name: String
         var limitCents: Int
@@ -96,7 +97,7 @@ nonisolated enum HearthMoney {
         }
     }
 
-    nonisolated struct Member: Hashable, Sendable, Identifiable {
+    nonisolated struct Member: Hashable, Sendable, Identifiable, Codable {
         var id: UUID
         var name: String
 
@@ -106,8 +107,8 @@ nonisolated enum HearthMoney {
         }
     }
 
-    nonisolated struct Bill: Hashable, Sendable, Identifiable {
-        nonisolated enum Frequency: String, Hashable, Sendable { case once, weekly, monthly, yearly }
+    nonisolated struct Bill: Hashable, Sendable, Identifiable, Codable {
+        nonisolated enum Frequency: String, Hashable, Sendable, Codable { case once, weekly, monthly, yearly }
 
         var id: UUID
         var name: String
@@ -298,7 +299,7 @@ nonisolated enum HearthMoney {
 
     // MARK: - The book: everything an answer reads
 
-    nonisolated struct Book: Sendable {
+    nonisolated struct Book: Sendable, Codable {
         var categories: [Category] = []
         var entries: [Entry] = []
         var bills: [Bill] = []
@@ -352,6 +353,9 @@ nonisolated enum HearthMoney {
         func ids(under budget: Category) -> Set<UUID> {
             Set([budget.id] + categories.filter { $0.parentID == budget.id }.map(\.id))
         }
+
+        /// The newest transaction's date: which of two copies is more up to date.
+        var newestEntry: Date? { entries.lazy.map(\.date).filter { $0 > .distantPast }.max() }
     }
 
     static func fold(_ text: String) -> String {
@@ -568,7 +572,7 @@ nonisolated enum HearthMoney {
             text = spendingText(result, when: when, place: ask.place)
         }
         if let newest = coverage.stopsShort(of: span, now: now, calendar: calendar) {
-            text += " Suffice has only synced entries through \(day(newest, now: now, calendar: calendar))."
+            text += " I can only see transactions through \(day(newest, now: now, calendar: calendar))."
         }
 
         var scope: [String] = []
@@ -631,9 +635,10 @@ nonisolated enum HearthMoney {
 
     private static func notSynced(_ when: String, coverage: Coverage, now: Date, calendar: Calendar) -> Reply {
         let about = when.hasPrefix("on ") ? String(when.dropFirst(3)) : when
-        let seen = coverage.newest.map { "I can see Suffice’s entries only through \(day($0, now: now, calendar: calendar))" }
-            ?? "I can’t see any Suffice entries yet"
-        return Reply(text: "\(seen), so I can’t tell you about \(about) yet. Open Suffice to sync, then ask again.")
+        guard let newest = coverage.newest else {
+            return Reply(text: "I can’t read Suffice’s transactions right now, so I can’t tell you about \(about). Try again in a moment.")
+        }
+        return Reply(text: "The newest transaction I can see from Suffice is from \(day(newest, now: now, calendar: calendar)), so I can’t tell you about \(about) yet.")
     }
 
     // MARK: Budgets
@@ -648,7 +653,7 @@ nonisolated enum HearthMoney {
         let toGo = isNow ? ", with \(daysLeft) \(daysLeft == 1 ? "day" : "days") to go" : ""
         let notSyncedNote: String = {
             guard isNow, let newest = coverage.stopsShort(of: month, now: now, calendar: calendar) else { return "" }
-            return " Suffice has only synced entries through \(day(newest, now: now, calendar: calendar))."
+            return " I can only see transactions through \(day(newest, now: now, calendar: calendar))."
         }()
 
         if let budget {

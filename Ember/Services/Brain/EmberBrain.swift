@@ -176,9 +176,15 @@ final class EmberBrain {
     /// A money question answered from the ledger by EmberMoneyPipeline: no model
     /// writes the numbers. Nil when the budget can't be read (the tools path explains why).
     private func answerMoney(_ request: EmberRequest, question: String, onSentence: (String) -> Void) async -> EmberTurn? {
-        let data = EmberData.shared
-        guard case .success(let ledger) = await data.ledger(), !ledger.isEmpty else { return nil }
-        let reply = EmberMoneyPipeline.answer(request, question: question, ledger: ledger)
+        // Suffice's own numbers on this iPhone first; the iCloud copy when it's newer or the
+        // only one.
+        let local = SufficeMoney.onThisPhone()?.book
+        var mirror: HearthMoney.Book?
+        if case .success(let ledger) = await EmberData.shared.ledger(), !ledger.isEmpty { mirror = ledger.book }
+        guard let best = SufficeMoney.best(local: local, mirror: mirror) else { return nil }
+        let book = best.book, source = best.source
+        EmberTrace.shared.note("money from \(source.rawValue): \(book.entries.count) entries, newest \(book.newestEntry.map { "\($0)" } ?? "none")")
+        let reply = EmberMoneyPipeline.answer(request, question: question, book: book)
         EmberTrace.shared.note("money pipeline: \(reply.text)")
         if let card = reply.card { toolbox.present(card, app: .suffice, link: URL(string: "suffice://budget"), action: "Open in Suffice") }
         var turn = EmberTurn(question: question, answer: reply.text, tier: .onDevice)

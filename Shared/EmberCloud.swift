@@ -240,6 +240,33 @@ nonisolated struct EmberCloudClient: Sendable {
 
     private nonisolated struct UnderstandReply: Decodable { var request: EmberRequest }
 
+    /// What was said, from 16-bit mono PCM (POST /v1/ember/transcribe). For Apple Watch, which
+    /// has no speech recognition of its own. `hints`: words likely said (first names, app names).
+    func transcribe(_ pcm: Data, sampleRate: Int = 16_000, hints: [String] = [], accessToken: String) async throws -> String {
+        var urlRequest = URLRequest(url: baseURL.appending(path: "v1/ember/transcribe"), timeoutInterval: 12)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        let body: [String: Any] = [
+            "audio": pcm.prefix(1_000_000).base64EncodedString(),
+            "sampleRate": sampleRate,
+            "language": Locale.current.language.languageCode.map { code in
+                Locale.current.region.flatMap { $0.identifier.count == 2 ? "\(code.identifier)-\($0.identifier)" : nil } ?? code.identifier
+            } ?? "en-US",
+            "hints": Array(hints.prefix(40)).map { String($0.prefix(40)) },
+        ]
+        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await session.data(for: urlRequest)
+        switch (response as? HTTPURLResponse)?.statusCode {
+        case 200:
+            struct Reply: Decodable { var text: String }
+            return try JSONDecoder().decode(Reply.self, from: data).text
+        case 429: throw EmberCloudError.rateLimited
+        case 401: throw URLError(.userAuthenticationRequired)
+        default: throw EmberCloudError.failed
+        }
+    }
+
     private nonisolated struct TextEvent: Decodable { var text: String }
     private nonisolated struct ToolEvent: Decodable { var id: String; var name: String; var input: [String: EmberJSON] }
     private nonisolated struct DoneEvent: Decodable { var stopReason: String? }

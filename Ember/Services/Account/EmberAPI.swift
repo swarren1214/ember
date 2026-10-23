@@ -258,7 +258,7 @@ actor EmberAPI {
         // (No shared session, but it was this account's: signed out elsewhere meanwhile.)
         let sharedNow = HearthAccounts.session()
         let mayShare = sharedNow.map { $0.userID == refreshed.user.id }
-            ?? (UserDefaults.standard.string(forKey: Self.sharedUserKey) != refreshed.user.id)
+            ?? (!HearthAccounts.sessionIsGone || UserDefaults.standard.string(forKey: Self.sharedUserKey) != refreshed.user.id)
         if mayShare { share(refreshed) } else { _ = followSharedSession() }
         return refreshed
     }
@@ -388,7 +388,9 @@ actor EmberAPI {
         let defaults = UserDefaults.standard
         let signedIn = isSignedInWithApple
         guard let shared = HearthAccounts.session() else {
-            guard let current = authSession, signedIn else { return .unchanged }
+            // Only a sign-in that's really gone from the Keychain is a sign-out elsewhere; one
+            // that can't be read right now changes nothing here.
+            guard HearthAccounts.sessionIsGone, let current = authSession, signedIn else { return .unchanged }
             if defaults.string(forKey: Self.sharedUserKey) == current.user.id {
                 // This sign-in was shared and now it's gone: signed out in another Hearth app.
                 forgetSession()

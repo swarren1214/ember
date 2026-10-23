@@ -614,7 +614,29 @@ nonisolated struct HearthSharedSession: Codable, Sendable, Equatable {
     var expiresAt: Double
     var userID: String
     var email: String?
-    var updatedBy: HearthApp
+    /// Which app wrote it last. Optional, and read leniently: a newer Hearth app this build
+    /// doesn't know (Ember, before this build had it) must never make the whole sign-in
+    /// unreadable, because an unreadable sign-in used to read as "signed out everywhere".
+    var updatedBy: HearthApp?
+
+    init(accessToken: String, refreshToken: String, expiresAt: Double, userID: String, email: String?, updatedBy: HearthApp?) {
+        self.accessToken = accessToken
+        self.refreshToken = refreshToken
+        self.expiresAt = expiresAt
+        self.userID = userID
+        self.email = email
+        self.updatedBy = updatedBy
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        accessToken = try container.decode(String.self, forKey: .accessToken)
+        refreshToken = try container.decode(String.self, forKey: .refreshToken)
+        expiresAt = try container.decode(Double.self, forKey: .expiresAt)
+        userID = try container.decode(String.self, forKey: .userID)
+        email = try? container.decodeIfPresent(String.self, forKey: .email)
+        updatedBy = try? container.decodeIfPresent(HearthApp.self, forKey: .updatedBy)
+    }
 }
 
 /// Who signed in with Apple on this device. Apple's user ID is the same in every app from the
@@ -624,7 +646,23 @@ nonisolated struct HearthSharedAppleID: Codable, Sendable, Equatable {
     var userID: String
     var fullName: String?
     var email: String?
-    var updatedBy: HearthApp
+    /// Read leniently, as in `HearthSharedSession`.
+    var updatedBy: HearthApp?
+
+    init(userID: String, fullName: String?, email: String?, updatedBy: HearthApp?) {
+        self.userID = userID
+        self.fullName = fullName
+        self.email = email
+        self.updatedBy = updatedBy
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        userID = try container.decode(String.self, forKey: .userID)
+        fullName = try? container.decodeIfPresent(String.self, forKey: .fullName)
+        email = try? container.decodeIfPresent(String.self, forKey: .email)
+        updatedBy = try? container.decodeIfPresent(HearthApp.self, forKey: .updatedBy)
+    }
 }
 
 /// The shared sign-in, kept in the Keychain under the Hearth app group (so only these apps can
@@ -687,7 +725,24 @@ nonisolated enum HearthAccounts {
         Hearth.postChange()
     }
 
+    /// True only when the Keychain says the shared session isn't there: signed out in another
+    /// Hearth app. A nil `session()` alone doesn't mean that; the Keychain may be unreadable just
+    /// then (locked before the first unlock, a busy securityd) or hold an entry this build can't
+    /// read. Only this may sign an app out.
+    static var sessionIsGone: Bool { isMissing(account: "session") }
+
+    /// As `sessionIsGone`, for the shared Apple ID.
+    static var appleIDIsGone: Bool { isMissing(account: "apple") }
+
     // MARK: Keychain
+
+    private static func isMissing(account: String) -> Bool {
+        var request = query(account: account)
+        request[kSecReturnAttributes as String] = true
+        request[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        return SecItemCopyMatching(request as CFDictionary, &result) == errSecItemNotFound
+    }
 
     private static func query(account: String) -> [String: Any] {
         [

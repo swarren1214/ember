@@ -381,6 +381,7 @@ struct EmberDataStatusView: View {
     @State private var newest: Date?
     @State private var newestPayees: [String] = []
     @State private var isFetching = false
+    @State private var local: (entries: Int, newest: Date?, updated: Date)?
 
     var body: some View {
         List {
@@ -403,13 +404,27 @@ struct EmberDataStatusView: View {
                 Text("Zones")
             }
             Section {
+                if let local {
+                    LabeledContent("Entries", value: "\(local.entries)")
+                    LabeledContent("Newest", value: local.newest?.formatted(date: .abbreviated, time: .omitted) ?? "None")
+                    LabeledContent("Shared", value: local.updated.formatted(.relative(presentation: .named)))
+                } else {
+                    Text("Suffice hasn’t shared its numbers on this iPhone yet. Opening Suffice once with this version does it.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Suffice on this iPhone")
+            } footer: {
+                Text("Ember answers money questions from Suffice’s own numbers first, and from iCloud when that’s newer.")
+            }
+            Section {
                 LabeledContent("Entries", value: "\(entries)")
                 LabeledContent("Newest", value: newest?.formatted(date: .abbreviated, time: .omitted) ?? "None")
                 ForEach(newestPayees, id: \.self) { line in
                     Text(line).font(.footnote).foregroundStyle(.secondary)
                 }
             } header: {
-                Text("Suffice")
+                Text("Suffice in iCloud")
             } footer: {
                 Text("If Suffice shows newer transactions than these, they haven’t reached iCloud yet: open Suffice on a device with them and check Profile for a sync problem.")
             }
@@ -454,6 +469,11 @@ struct EmberDataStatusView: View {
         let dated = ledger.entries.filter { $0.date > .distantPast }.sorted { $0.date > $1.date }
         entries = dated.count
         newest = dated.first?.date
+        if let shared = SufficeMoney.onThisPhone() {
+            local = (shared.book.entries.count, shared.book.newestEntry, shared.updatedAt)
+        } else {
+            local = nil
+        }
         newestPayees = dated.prefix(5).map { "\($0.date.formatted(.dateTime.month(.abbreviated).day())): \($0.payee) \(EmberMoney.exact($0.amountCents))" }
     }
 }
