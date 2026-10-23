@@ -64,6 +64,13 @@ final class EmberBrain {
     }
 
     /// Clear: a new conversation (new tokens, empty history).
+    #if DEBUG
+    /// Screenshot mode: a conversation already had (ScreenshotSeed).
+    func showForScreenshots(_ turns: [EmberTurn]) {
+        self.turns = turns
+    }
+    #endif
+
     func reset() {
         turns = []
         redactor = nil

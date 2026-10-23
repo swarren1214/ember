@@ -37,6 +37,8 @@ final class EmberContext {
 
     /// Re-reads every app's files. Cheap: small JSON files on this device.
     func refresh() {
+        // Screenshot mode shows made-up lines (ScreenshotSeed) and reads nothing.
+        guard !ScreenshotMode.isOn else { return }
         let settings = EmberSettings.shared
         mealPlan = settings.canRead(.bigtable) ? Hearth.read(HearthMealPlan.self, from: .bigtable) : nil
         groceries = settings.canRead(.bigtable) ? Hearth.read(HearthGroceries.self, from: .bigtable) : nil
@@ -88,6 +90,9 @@ final class EmberContext {
     /// A line from each app that has something to say today, in the order a day runs:
     /// the family's schedule, dinner, groceries, money, food, reading.
     var glances: [Glance] {
+        #if DEBUG
+        if ScreenshotMode.isOn { return ScreenshotSeed.glances }
+        #endif
         var result: [Glance] = []
         let now = Date.now
         let calendar = Calendar.current

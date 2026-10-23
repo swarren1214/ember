@@ -9,6 +9,9 @@ struct EmberApp: App {
     init() {
         // Alerts use the system label color rather than the accent. Destructive buttons stay red.
         UIView.appearance(whenContainedInInstancesOf: [UIAlertController.self]).tintColor = .label
+        #if DEBUG
+        ScreenshotSeed.stage()
+        #endif
         // One sign-in for every Hearth app: follow sign-ins and sign-outs in the others.
         EmberSignIn.start()
     }
@@ -72,7 +75,7 @@ struct EmberRoot: View {
                 if settings.cloudHelp == nil, !ScreenshotMode.isOn { showsCloudChoice = true }
             }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active {
+                if phase == .active, !ScreenshotMode.isOn {
                     EmberContext.shared.refresh()
                     EmberData.shared.prefetch()
                     EmberPlace.refresh()

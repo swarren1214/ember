@@ -37,6 +37,7 @@ struct WatchRootView: View {
         }
         .animation(.snappy, value: model.phase)
         .task {
+            guard !ScreenshotMode.isOn else { return }
             signedIn = await WatchAccount.shared.isSignedIn
             model.refreshAbilities()
         }

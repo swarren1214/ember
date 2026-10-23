@@ -105,6 +105,21 @@ final class WatchModel: NSObject {
     }
 
     func start() {
+        #if DEBUG
+        if ScreenshotMode.isOn {
+            // Screenshot mode: made-up values, nothing from the iPhone or the microphone.
+            context = ScreenshotMode.context
+            canListen = true
+            switch ScreenshotMode.screen ?? .face {
+            case .face: phase = .face
+            case .listening:
+                phase = .listening
+                EmberLevelMeter.shared.value = 0.45
+            case .answer: phase = .answer(ScreenshotMode.reply)
+            }
+            return
+        }
+        #endif
         refreshAbilities()
         guard WCSession.isSupported() else { return }
         WCSession.default.delegate = self

@@ -110,6 +110,8 @@ final class HearthHouseholdStore: NSObject, CKSyncEngineDelegate {
 
     @ObservationIgnored private(set) var app: HearthApp = .caloma
     @ObservationIgnored private var started = false
+    /// Screenshot mode: a made-up household, and iCloud is never asked (`showForScreenshots`).
+    @ObservationIgnored private var showingScreenshots = false
     @ObservationIgnored private var container: CKContainer?
     @ObservationIgnored private var privateEngine: CKSyncEngine?
     @ObservationIgnored private var sharedEngine: CKSyncEngine?
@@ -253,7 +255,9 @@ final class HearthHouseholdStore: NSObject, CKSyncEngineDelegate {
         Task {
             await refreshAccount()
             await refreshShare()
+            await catchUp()
         }
+        startCatchUpLoop()
     }
 
     /// Off only where the app hasn't got the shared iCloud container yet. Every Hearth app has it.
@@ -275,6 +279,7 @@ final class HearthHouseholdStore: NSObject, CKSyncEngineDelegate {
     }
 
     func refreshAccount() async {
+        guard !showingScreenshots else { return }
         guard let container else { return }
         do {
             account = switch try await container.accountStatus() {
@@ -355,9 +360,12 @@ final class HearthHouseholdStore: NSObject, CKSyncEngineDelegate {
 
     /// Sends what's waiting and fetches the latest. For pull to refresh; never throws.
     func refresh() async {
+        guard !showingScreenshots else { return }
         guard let engine = activeEngine, account == .available else { return }
         do { try await engine.sendChanges() } catch { note(error) }
         do { try await engine.fetchChanges(.init(scope: .zoneIDs(fetchZones(isShared: isMember)))) } catch { note(error) }
+        // What the engine didn't hear about (`catchUp`).
+        await catchUp()
     }
 
     /// Another Hearth app on this device saved its copy: take in what's newer.
@@ -429,6 +437,7 @@ final class HearthHouseholdStore: NSObject, CKSyncEngineDelegate {
         guard let engine = isShared ? sharedEngine : privateEngine, account == .available else { return }
         do { try await engine.sendChanges() } catch { note(error) }
         do { try await engine.fetchChanges(.init(scope: .zoneIDs(fetchZones(isShared: isShared)))) } catch { note(error) }
+        await catchUp()
     }
 
     // MARK: - Changing
@@ -760,6 +769,97 @@ final class HearthHouseholdStore: NSObject, CKSyncEngineDelegate {
         engine.state.add(pendingRecordZoneChanges: recordNames.map { .saveRecord(CKRecord.ID(recordName: $0, zoneID: zoneID)) })
     }
 
+    // MARK: - Catching up straight from iCloud
+
+    // CKSyncEngine fetches only what it has heard changed, and it hears that from CloudKit's
+    // silent pushes, which iOS delays, throttles and drops (above all for an app that isn't
+    // running). A device that missed one never fetched the other device's change: a chore
+    // checked off on one phone, a person added on another. So every zone this app uses is also
+    // read straight from iCloud from where this device last left off: at launch, coming back to
+    // the app, pull to refresh, a push, and every 45 seconds while the app is open. Records the
+    // engine brings as well are taken in twice, which is harmless (newest wins everywhere, and
+    // each app keeps an edit that hasn't gone up yet).
+
+    @ObservationIgnored private var isCatchingUp = false
+    @ObservationIgnored private var catchUpLoop: Task<Void, Never>?
+
+    /// Reads what changed in iCloud since last time in each zone this app uses.
+    func catchUp() async {
+        guard !showingScreenshots else { return }
+        guard let container, account == .available, !isCatchingUp else { return }
+        isCatchingUp = true
+        defer { isCatchingUp = false }
+        for isShared in [false, true] {
+            let database = isShared ? container.sharedCloudDatabase : container.privateCloudDatabase
+            for zone in fetchZones(isShared: isShared) {
+                await catchUp(zone: zone, in: database, isShared: isShared)
+            }
+        }
+    }
+
+    private func catchUp(zone: CKRecordZone.ID, in database: CKDatabase, isShared: Bool) async {
+        let key = Self.catchUpKey(app: app, zone: zone, isShared: isShared)
+        var token = Self.loadToken(key)
+        var moreComing = true
+        var startedOver = false
+        while moreComing {
+            do {
+                let changes = try await database.recordZoneChanges(inZoneWith: zone, since: token)
+                // Joined, left or switched meanwhile: these aren't for where this app is now.
+                guard fetchZones(isShared: isShared).contains(zone) else { return }
+                let records = changes.modificationResultsByID.values.compactMap { try? $0.get().record }
+                if !records.isEmpty || !changes.deletions.isEmpty {
+                    applyZoneChanges(modifications: records, deletions: changes.deletions, isPrivate: !isShared)
+                }
+                token = changes.changeToken
+                Self.saveToken(token, key)
+                moreComing = changes.moreComing
+            } catch let error as CKError where error.code == .changeTokenExpired && !startedOver {
+                // iCloud forgot where this device was: read the zone from the start once.
+                startedOver = true
+                token = nil
+                Self.saveToken(nil, key)
+            } catch let error as CKError where error.code == .zoneNotFound || error.code == .userDeletedZone {
+                // Not made yet, or gone: the engine handles that.
+                return
+            } catch {
+                log.error("Couldn't catch up on \(zone.zoneName, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                return
+            }
+        }
+    }
+
+    /// Every 45 seconds while the app is in front.
+    private func startCatchUpLoop() {
+        guard catchUpLoop == nil else { return }
+        catchUpLoop = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(45))
+                guard UIApplication.shared.applicationState == .active else { continue }
+                await HearthHouseholdStore.shared.catchUp()
+            }
+        }
+    }
+
+    /// Where this app last left off in a zone, per database. Kept by each app (each reads its
+    /// own zones), not in the app group.
+    nonisolated private static func catchUpKey(app: HearthApp, zone: CKRecordZone.ID, isShared: Bool) -> String {
+        "hearth.catchUp.\(app.rawValue).\(isShared ? "shared" : "private").\(zone.ownerName).\(zone.zoneName)"
+    }
+
+    nonisolated private static func loadToken(_ key: String) -> CKServerChangeToken? {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+        return try? NSKeyedUnarchiver.unarchivedObject(ofClass: CKServerChangeToken.self, from: data)
+    }
+
+    nonisolated private static func saveToken(_ token: CKServerChangeToken?, _ key: String) {
+        guard let token, let data = try? NSKeyedArchiver.archivedData(withRootObject: token, requiringSecureCoding: true) else {
+            UserDefaults.standard.removeObject(forKey: key)
+            return
+        }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+
     // MARK: - CKSyncEngineDelegate
 
     func handleEvent(_ event: CKSyncEngine.Event, syncEngine: CKSyncEngine) async {
@@ -862,17 +962,23 @@ final class HearthHouseholdStore: NSObject, CKSyncEngineDelegate {
     }
 
     private func handleZoneChanges(_ changes: CKSyncEngine.Event.FetchedRecordZoneChanges, isPrivate: Bool) {
+        applyZoneChanges(modifications: changes.modifications.map(\.record), deletions: changes.deletions, isPrivate: isPrivate)
+    }
+
+    /// What iCloud sent for this app's zones, from the engine or from `catchUp`: the app's own
+    /// zone goes to its participant, the household's is merged here.
+    private func applyZoneChanges(modifications fetched: [CKRecord], deletions fetchedDeletions: [CKDatabase.RecordZoneChange.Deletion], isPrivate: Bool) {
         if let zone = participantZone(isShared: !isPrivate) {
-            let modifications = changes.modifications.map(\.record).filter { $0.recordID.zoneID == zone }
-            let deletions = changes.deletions.filter { $0.recordID.zoneID == zone }
+            let modifications = fetched.filter { $0.recordID.zoneID == zone }
+            let deletions = fetchedDeletions.filter { $0.recordID.zoneID == zone }
             if !modifications.isEmpty || !deletions.isEmpty {
                 zoneParticipant?.zoneFetched(modifications: modifications, deletions: deletions)
             }
         }
         guard isPrivate != isMember else { return }
         let zone = zoneID
-        let modifications = changes.modifications.map(\.record).filter { $0.recordID.zoneID == zone }
-        let deletions = changes.deletions.filter { $0.recordID.zoneID == zone }
+        let modifications = fetched.filter { $0.recordID.zoneID == zone }
+        let deletions = fetchedDeletions.filter { $0.recordID.zoneID == zone }
         guard !modifications.isEmpty || !deletions.isEmpty else { return }
 
         var next = snapshot
@@ -1251,7 +1357,9 @@ final class HearthHouseholdStore: NSObject, CKSyncEngineDelegate {
     var canInvite: Bool { !isMember && account == .available && canEditEveryone }
 
     /// The household's link: it opens only for the people invited to it.
-    var invitationURL: URL? { share?.url }
+    /// The link to send or show as a code: it opens in the app it was made in
+    /// (`HearthInviteLink`), not whichever Hearth app iOS picks for the iCloud link.
+    var invitationURL: URL? { share?.url.map { HearthInviteLink.url(for: $0, from: app) } }
 
     /// Invites someone as `member`: adds their Apple Account (by email or phone) to the
     /// household's share, with what `role` may do there, and notes the invitation on them.
@@ -1361,6 +1469,8 @@ final class HearthHouseholdStore: NSObject, CKSyncEngineDelegate {
     func openInvitation(_ url: URL) async {
         problem = nil
         guard let container else { return }
+        // A Hearth invitation link carries the iCloud one inside it.
+        let url = HearthInviteLink.shareURL(from: url) ?? url
         isWorking = true
         defer { isWorking = false }
         do {
@@ -1770,6 +1880,22 @@ final class HearthHouseholdStore: NSObject, CKSyncEngineDelegate {
         return errors.contains { $0.localizedDescription.localizedCaseInsensitiveContains("production schema") }
     }
 }
+
+#if DEBUG
+extension HearthHouseholdStore {
+    /// Screenshot mode only (each app's ScreenshotMode): shows a made-up household with `me` as
+    /// this device's person. Nothing is read from or written to iCloud or the app group, so the
+    /// Simulator's real household is untouched. Call before anything starts the store.
+    func showForScreenshots(_ household: HearthHouseholdSnapshot, me: String?) {
+        started = true
+        showingScreenshots = true
+        snapshot = household
+        localMeID = me
+        account = .available
+        privateFetched = true
+    }
+}
+#endif
 
 // MARK: - Records
 

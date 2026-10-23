@@ -25,6 +25,61 @@ import CoreImage.CIFilterBuiltins
 import SwiftUI
 import UIKit
 
+// MARK: - Links that open the app they came from
+
+/// Every Hearth app uses the same iCloud container, so iOS opens an iCloud invitation link in
+/// whichever Hearth app it picks (Suffice, for an invitation sent from Caloma). Invitations go
+/// out as `https://api.hearthapps.com/<app>/household/join?share=<the iCloud link>` instead:
+/// the Hearth API's apple-app-site-association gives each app its own `/<app>/household/*`
+/// paths, so iOS opens the app the invitation was made in. Without that app, the page there
+/// passes them on to the iCloud invitation, which any Hearth app (or iCloud.com) opens.
+///
+/// Each app's `.onOpenURL` starts with `if HearthInviteLink.open(url) { return }`; its
+/// `<app>://household/join?share=` form works the same way.
+enum HearthInviteLink {
+    static let host = "api.hearthapps.com"
+
+    static func url(for share: URL, from app: HearthApp) -> URL {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = host
+        components.path = "/\(app.rawValue)/household/join"
+        components.queryItems = [URLQueryItem(name: "share", value: share.absoluteString)]
+        return components.url ?? share
+    }
+
+    /// The iCloud invitation inside a Hearth invitation link, or nil for any other link.
+    static func shareURL(from url: URL) -> URL? {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        let path = components.path
+        let isLink: Bool
+        if components.scheme == "https" {
+            isLink = components.host == host && path.hasSuffix("/household/join")
+        } else {
+            // caloma://household/join?share=…
+            isLink = components.host == "household" && path == "/join"
+        }
+        guard isLink, let value = components.queryItems?.first(where: { $0.name == "share" })?.value,
+              let share = URL(string: value), share.scheme == "https",
+              let shareHost = share.host(), shareHost == "icloud.com" || shareHost.hasSuffix(".icloud.com") else { return nil }
+        return share
+    }
+
+    /// For the app's `.onOpenURL`: true when `url` was a household invitation (it's opening).
+    @MainActor @discardableResult
+    static func open(_ url: URL) -> Bool {
+        guard let share = shareURL(from: url) else { return false }
+        Task {
+            // Opened from the link at launch: the store may not have started yet.
+            for _ in 0..<50 where HearthHouseholdStore.shared.cloudContainer == nil {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            await HearthHouseholdStore.shared.openInvitation(share)
+        }
+        return true
+    }
+}
+
 // MARK: - Status
 
 extension HearthHouseholdStore {

@@ -85,6 +85,8 @@ final class EmberConversation {
 
     /// Called by the voice screen when it appears.
     func startVoice() async {
+        // Screenshot mode: the screen is already set up, and the microphone is never asked for.
+        guard !ScreenshotMode.isOn else { return }
         phase = .starting
         speaker.stop()
         guard await Self.permissionsGranted() else {
@@ -144,6 +146,17 @@ final class EmberConversation {
         guard phase == .speaking || phase == .thinking else { return }
         bargeIn()
     }
+
+    #if DEBUG
+    /// Screenshot mode: the voice screen mid-conversation, without the microphone (ScreenshotSeed).
+    func showForScreenshots(phase: Phase, transcript: String, question: String, replyID: UUID? = nil) {
+        self.phase = phase
+        self.transcript = transcript
+        self.question = question
+        self.replyID = replyID
+        isVoicePresented = true
+    }
+    #endif
 
     // MARK: Typed questions, suggestions, Siri
 
