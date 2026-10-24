@@ -293,8 +293,9 @@ final class WatchBrain {
             }
         case "chores", "family_calendar":
             await family.refresh()
+            if let error = family.lastError { return "Couldn't reach Caloma's data in iCloud just now (\(error.errorDescription ?? "unknown")). Try again in a moment." }
             let board = await family.snapshot(CalomaFamily.init(records:))
-            guard !board.isEmpty else { return family.lastError?.errorDescription ?? "Caloma's family isn't in iCloud yet." }
+            guard !board.isEmpty else { return "Caloma's family isn't in iCloud yet." }
             return name == "chores"
                 ? EmberSkills.chores(board, day: arg("day"), person: arg("person")).facts
                 : EmberSkills.calendar(board, range: arg("range"), person: arg("person")).facts

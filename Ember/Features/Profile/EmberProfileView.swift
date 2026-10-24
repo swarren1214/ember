@@ -373,7 +373,10 @@ struct EmberDataStatusView: View {
         var location: String
         var records: Int
         var fetched: Date?
+        var wholeRead: Date?
         var error: String?
+        /// What Ember makes of it today (Caloma: the chore board), to hold up against the app.
+        var today: String?
     }
 
     @State private var rows: [Row] = []
@@ -395,6 +398,11 @@ struct EmberDataStatusView: View {
                         }
                         Text(row.location + (row.fetched.map { " · checked \($0.formatted(.relative(presentation: .named)))" } ?? " · not checked yet"))
                             .font(.footnote).foregroundStyle(.secondary)
+                        Text("Read whole " + (row.wholeRead.map { $0.formatted(.relative(presentation: .named)) } ?? "not yet"))
+                            .font(.footnote).foregroundStyle(.secondary)
+                        if let today = row.today {
+                            Text(today).font(.footnote)
+                        }
                         if let error = row.error {
                             Text(error).font(.footnote).foregroundStyle(.red)
                         }
@@ -463,7 +471,15 @@ struct EmberDataStatusView: View {
         let data = EmberData.shared
         rows = [("Suffice", data.budget), ("Caloma", data.family), ("BigTable", data.kitchen)].map { name, zone in
             Row(name: name, location: zone.whereLabel, records: zone.records.count, fetched: zone.lastFetched,
-                error: zone.lastError?.localizedDescription)
+                wholeRead: zone.lastWholeRead, error: zone.lastError?.localizedDescription)
+        }
+        // Caloma's board today as Ember sees it: should match the kiosk's "The kids today".
+        let family = await data.family.snapshot(CalomaFamily.init(records:))
+        if !family.isEmpty, let index = rows.firstIndex(where: { $0.name == "Caloma" }) {
+            let board = family.board(on: .now)
+            let kids = board.filter { family.member($0.memberID)?.isKid ?? true }
+            let done = kids.filter { $0.status != .open }.count
+            rows[index].today = "Today: \(done) of \(kids.count) kids’ jobs done · \(family.waitingForApproval.count) waiting for your OK"
         }
         let ledger = await data.budget.snapshot(SufficeLedger.init(records:))
         let dated = ledger.entries.filter { $0.date > .distantPast }.sorted { $0.date > $1.date }

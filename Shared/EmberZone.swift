@@ -115,6 +115,38 @@ final class EmberZone {
     /// Fresh enough to answer from without fetching again.
     var isFresh: Bool { lastFetched.map { Date.now.timeIntervalSince($0) < 60 } ?? false }
 
+    // MARK: Reading the whole zone again
+
+    // Fetching only what changed since the last look is fast, but a mirror that once missed or
+    // misread a change (a chore approved on the kiosk, chores added on another device) would keep
+    // the old copy for good. So every zone is also read whole: once on every device after this
+    // generation is raised, and again whenever the last whole read is six hours old. The whole
+    // read is built aside and swapped in only when it's complete.
+
+    /// Raised when mirrors may be holding something iCloud no longer has: each device reads every
+    /// zone whole on its next fetch. (1: answers about Caloma's chores were days behind the kiosk.)
+    static let wholeReadGeneration = 1
+    static let wholeReadInterval: TimeInterval = 6 * 60 * 60
+
+    /// When this zone was last read whole, for Profile › iCloud Data.
+    private(set) var lastWholeRead: Date? {
+        get { UserDefaults.standard.object(forKey: "ember.zone.wholeRead.\(zoneName)") as? Date }
+        set { UserDefaults.standard.set(newValue, forKey: "ember.zone.wholeRead.\(zoneName)") }
+    }
+
+    private var wholeReadDone: Int {
+        get { UserDefaults.standard.integer(forKey: "ember.zone.wholeReadGeneration.\(zoneName)") }
+        set { UserDefaults.standard.set(newValue, forKey: "ember.zone.wholeReadGeneration.\(zoneName)") }
+    }
+
+    private var needsWholeRead: Bool {
+        token == nil || wholeReadDone < Self.wholeReadGeneration
+            || lastWholeRead.map { Date.now.timeIntervalSince($0) > Self.wholeReadInterval } ?? true
+    }
+
+    /// The last fetch worked: what's mirrored is what iCloud has now (as of `lastFetched`).
+    var isCurrent: Bool { lastError == nil && lastFetched != nil }
+
     /// Bumped whenever the mirror changes, so parsed snapshots know when they're stale.
     private var version = 0
     private var snapshots: [ObjectIdentifier: (version: Int, value: any Sendable)] = [:]
@@ -155,25 +187,39 @@ final class EmberZone {
 
     private func fetchChanges() async {
         let (database, zoneID) = location
-        var changed = false
+        let whole = needsWholeRead
+        // A whole read starts from nothing and replaces the mirror only once it's complete.
+        var fetched = whole ? [:] : records
+        var cursor = whole ? nil : token
+        var changed = whole
+        var count = 0
         do {
             var more = true
             while more {
-                let changes = try await database.recordZoneChanges(inZoneWith: zoneID, since: token, desiredKeys: desiredKeys)
+                let changes = try await database.recordZoneChanges(inZoneWith: zoneID, since: cursor, desiredKeys: desiredKeys)
                 if !changes.modificationResultsByID.isEmpty || !changes.deletions.isEmpty { changed = true }
                 for (id, result) in changes.modificationResultsByID {
                     if case .success(let modification) = result {
-                        records[id.recordName] = modification.record
+                        fetched[id.recordName] = modification.record
+                        count += 1
                     }
                 }
                 for deletion in changes.deletions {
-                    records[deletion.recordID.recordName] = nil
+                    fetched[deletion.recordID.recordName] = nil
+                    count += 1
                 }
-                token = changes.changeToken
+                cursor = changes.changeToken
                 more = changes.moreComing
             }
+            if changed { records = fetched }
+            token = cursor
             lastFetched = .now
             lastError = nil
+            if whole {
+                lastWholeRead = .now
+                wholeReadDone = Self.wholeReadGeneration
+            }
+            log.notice("\(self.zoneName, privacy: .public): \(whole ? "read whole" : "changes", privacy: .public), \(count) records, \(self.records.count) mirrored")
             // Records without their values (a mirror saved before Ember kept Suffice's sealed
             // fields, or a fetch that left them out) read as budgets with no names and
             // transactions with no dates: "nothing spent". Fetch the whole zone again, with
@@ -199,7 +245,7 @@ final class EmberZone {
         } catch let error as CKError where error.code == .notAuthenticated {
             lastError = .noAccount
         } catch {
-            log.error("\(self.zoneName, privacy: .public) fetch failed: \(error.localizedDescription, privacy: .public)")
+            log.error("\(self.zoneName, privacy: .public) fetch failed: \(String(describing: error), privacy: .public)")
             lastError = .failed(error.localizedDescription)
         }
     }
@@ -277,6 +323,7 @@ final class EmberZone {
         records = [:]
         token = nil
         lastFetched = nil
+        lastWholeRead = nil
         writing?.cancel()
         try? FileManager.default.removeItem(at: fileURL)
     }

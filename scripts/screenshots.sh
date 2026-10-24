@@ -31,6 +31,8 @@
 #                                     portrait only) and saved in <appearance>-landscape folders. It turns the Simulator
 #                                     through its Device menu, which needs Accessibility access.
 #   SHUTDOWN=1                        Shut the Simulator down when done.
+#   KEEP_SIMULATOR=1                  Keep this run's Simulator. Otherwise it's deleted when the run ends,
+#                                     along with any leftover "<App> Screenshots" Simulators that are shut down.
 #   WARMUP=12                         Seconds the warm-up launch gets before capturing starts.
 #   FIRST_EXTRA=4                     Extra seconds for the first screen after an appearance change,
 #                                     a rotation or a fold.
@@ -180,33 +182,74 @@ cleanup() {
   if [[ -n "$UNFOLDED" ]]; then fold closed || true; fi
   if [[ -n "$UDID" ]]; then
     xcrun simctl terminate "$UDID" "$LAUNCH_ID" 2>/dev/null || true
-    if [[ -n "$SHUTDOWN_AFTER" ]]; then xcrun simctl shutdown "$UDID" 2>/dev/null || true; fi
+    if [[ -z "${KEEP_SIMULATOR:-}" ]]; then
+      xcrun simctl shutdown "$UDID" 2>/dev/null || true
+      xcrun simctl delete "$UDID" 2>/dev/null || true
+    elif [[ -n "$SHUTDOWN_AFTER" ]]; then
+      xcrun simctl shutdown "$UDID" 2>/dev/null || true
+    fi
+  fi
+  # Leftovers from older runs: this app's screenshot Simulators that are shut down (so not in use).
+  if [[ -z "${KEEP_SIMULATOR:-}" && -f "$HELPERS/stale.py" ]]; then
+    for stale in $(xcrun simctl list devices -j 2>/dev/null | SIM_NAME="$SIM_NAME" /usr/bin/python3 "$HELPERS/stale.py"); do
+      xcrun simctl delete "$stale" 2>/dev/null || true
+    done
   fi
   rm -rf "$HELPERS"
 }
 trap cleanup EXIT
 trap 'exit 143' TERM INT
 
-# Turns the Simulator window with this device (the one `open -a Simulator` just brought
+# Turns the Simulator window with this device (the one Device Hub or Simulator just brought
 # forward) to portrait or landscape, through the Simulator's Device menu. macOS asks once to
 # let Hearth Ship (or Terminal) control the computer for this: System Settings › Privacy &
 # Security › Accessibility.
+# Builds duo-hinge (hearth-ship/tools/duo-hinge.m) the first time, or after it changes. It
+# sends simulators the events Device Hub's fold and orientation controls send. DUO_HINGE can
+# point at another build of it.
+hinge_tool() {
+  [[ -z "$HINGE" ]] || return 0
+  if [[ -n "${DUO_HINGE:-}" ]]; then
+    HINGE="$DUO_HINGE"
+    return 0
+  fi
+  local source="$ROOT/../hearth-ship/tools/duo-hinge.m"
+  local cache="$HOME/Library/Caches/HearthShip"
+  if [[ ! -f "$source" ]]; then
+    echo "$source is missing." >&2
+    return 1
+  fi
+  if [[ ! -x "$cache/duo-hinge" || "$source" -nt "$cache/duo-hinge" ]]; then
+    mkdir -p "$cache"
+    clang -fobjc-arc -framework Foundation -o "$cache/duo-hinge" "$source" >&2 || { echo "duo-hinge didn't build." >&2; return 1; }
+  fi
+  HINGE="$cache/duo-hinge"
+}
+
+# Turns the Simulator to portrait or landscape. Xcode 27's Device Hub has no scriptable menu,
+# so this sends the event its orientation picker sends (through duo-hinge), then also asks
+# devicectl, which some simulators need (it doesn't stick on the iPhone Duo, the event does).
+# No Accessibility or Automation permission is needed.
 rotate() {
-  local item
+  local value
   if [[ "$1" == landscape ]]; then
     [[ -z "$ROTATED" ]] || return 0
-    item="Rotate Left"
+    value="landscape-left"
   else
     [[ -n "$ROTATED" ]] || return 0
-    item="Rotate Right"
+    value="portrait"
   fi
-  open -a Simulator --args -CurrentDeviceUDID "$UDID" >/dev/null 2>&1 || true
-  sleep 1
-  if ! osascript \
-      -e 'tell application "Simulator" to activate' \
-      -e "tell application \"System Events\" to tell process \"Simulator\" to click menu item \"$item\" of menu \"Device\" of menu bar 1" \
-      >/dev/null 2>&1; then
-    echo "Couldn't turn the Simulator ($item). Allow control in System Settings › Privacy & Security › Accessibility, then try again." >&2
+  local turned=""
+  if hinge_tool && "$HINGE" -d "$UDID" orient "$value" >/dev/null 2>&1; then turned=1; fi
+  if [[ -z "$DUO" ]]; then
+    local camel="landscapeLeft"; [[ "$value" == portrait ]] && camel="portrait"
+    if xcrun devicectl device orientation set --device "$UDID" "$value" >/dev/null 2>&1 \
+       || xcrun devicectl device orientation set --device "$UDID" "$camel" >/dev/null 2>&1; then
+      turned=1
+    fi
+  fi
+  if [[ -z "$turned" ]]; then
+    echo "Couldn't turn the Simulator to $value: neither Device Hub's orientation event nor devicectl worked." >&2
     return 1
   fi
   if [[ "$1" == landscape ]]; then ROTATED=1; else ROTATED=""; fi
@@ -218,28 +261,7 @@ rotate() {
 # sends the Simulator the same message Device Hub's fold controls do. It's built with clang
 # the first time. DUO_HINGE can point at another build of it.
 fold() {
-  if [[ -z "$HINGE" ]]; then
-    if [[ -n "${DUO_HINGE:-}" ]]; then
-      HINGE="$DUO_HINGE"
-    else
-      local source="$ROOT/../hearth-ship/tools/duo-hinge.m"
-      local cache="$HOME/Library/Caches/HearthShip"
-      HINGE="$cache/duo-hinge"
-      if [[ ! -f "$source" ]]; then
-        echo "Can't fold the iPhone Duo: $source is missing." >&2
-        HINGE=""
-        return 1
-      fi
-      if [[ ! -x "$HINGE" || "$source" -nt "$HINGE" ]]; then
-        mkdir -p "$cache"
-        if ! clang -fobjc-arc -framework Foundation -o "$HINGE" "$source" >&2; then
-          echo "Can't fold the iPhone Duo: duo-hinge didn't build." >&2
-          HINGE=""
-          return 1
-        fi
-      fi
-    fi
-  fi
+  hinge_tool || { echo "Can't fold the iPhone Duo." >&2; return 1; }
   if ! "$HINGE" -d "$UDID" "$1" >/dev/null; then
     echo "Couldn't set the iPhone Duo's hinge ($1)." >&2
     return 1
@@ -368,6 +390,15 @@ else:
           + "\nAdd a " + platform + " runtime in Xcode > Settings > Components, or pass DEVICE_TYPE=\"<one of these>\".")
 PY
 
+cat > "$HELPERS/stale.py" <<'PY'
+import json, os, sys
+prefix = os.environ["SIM_NAME"] + " ("
+for devices in json.load(sys.stdin)["devices"].values():
+    for d in devices:
+        if d["name"].startswith(prefix) and (d.get("state") == "Shutdown" or not d.get("isAvailable", True)):
+            print(d["udid"])
+PY
+
 cat > "$HELPERS/udid.py" <<'PY'
 import json, os, sys
 devices = json.load(sys.stdin)["devices"].get(os.environ["RUNTIME"], [])
@@ -410,7 +441,7 @@ log "Booting $SIM"
 event phase booting
 xcrun simctl boot "$UDID" 2>/dev/null || true
 xcrun simctl bootstatus "$UDID" -b >/dev/null
-open -a Simulator --args -CurrentDeviceUDID "$UDID" || true
+open -b com.apple.dt.Devices >/dev/null 2>&1 || open -a Simulator --args -CurrentDeviceUDID "$UDID" >/dev/null 2>&1 || true
 
 # MARK: Build and install
 

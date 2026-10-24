@@ -61,16 +61,18 @@ final class EmberData {
     func familyBoard() async -> Result<CalomaFamily, EmberZoneError> {
         locate()
         await family.refresh()
+        // Never an answer from a copy that couldn't be brought up to date: chores and approvals
+        // change by the minute, and an old copy reads as the wrong answer.
+        if let error = family.lastError { return .failure(error) }
         let value = await family.snapshot(CalomaFamily.init(records:))
-        if value.isEmpty, let error = family.lastError { return .failure(error) }
         return .success(value)
     }
 
     func groceries() async -> Result<BigTableGroceries, EmberZoneError> {
         locate()
         await kitchen.refresh()
+        if let error = kitchen.lastError { return .failure(error) }
         let value = await kitchen.snapshot(BigTableGroceries.init(records:))
-        if value.activeRecordName == nil, let error = kitchen.lastError { return .failure(error) }
         return .success(value)
     }
 

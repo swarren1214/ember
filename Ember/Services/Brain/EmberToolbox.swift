@@ -640,6 +640,12 @@ final class EmberToolbox {
 
     // MARK: Family (Caloma)
 
+    /// Why Caloma's data couldn't be used: iCloud's own reason when it failed.
+    private static func reason(_ result: Result<CalomaFamily, EmberZoneError>, fallback: String) -> String {
+        if case .failure(let error) = result { return EmberData.explain(error, app: .caloma) }
+        return fallback
+    }
+
     private func family(_ answer: (CalomaFamily) -> EmberAnswer) async -> String {
         switch await data.familyBoard() {
         case .success(let family) where !family.isEmpty:
@@ -655,7 +661,8 @@ final class EmberToolbox {
     }
 
     private func approveChores(person: String, chore: String) async -> String {
-        guard case .success(let family) = await data.familyBoard() else { return "Caloma's family isn't in iCloud yet." }
+        let loaded = await data.familyBoard()
+        guard case .success(let family) = loaded else { return Self.reason(loaded, fallback: "Caloma's family isn't in iCloud yet.") }
         var waiting = family.waitingForApproval
         if !person.isEmpty, let member = family.findMember(person) { waiting = waiting.filter { $0.memberID == member.id } }
         if !chore.isEmpty, let match = family.findChore(chore) { waiting = waiting.filter { $0.choreID == match.id } }
@@ -680,7 +687,8 @@ final class EmberToolbox {
     }
 
     private func markChoreDone(chore: String, person: String) async -> String {
-        guard case .success(let family) = await data.familyBoard() else { return "Caloma's family isn't in iCloud yet." }
+        let loaded = await data.familyBoard()
+        guard case .success(let family) = loaded else { return Self.reason(loaded, fallback: "Caloma's family isn't in iCloud yet.") }
         let board = family.board(on: .now).filter { $0.status == .open }
         var items = chore.isEmpty ? board : board.filter { SufficeLedger.fold($0.chore.title).contains(SufficeLedger.fold(chore)) || SufficeLedger.fold(chore).contains(SufficeLedger.fold($0.chore.title)) }
         if !person.isEmpty, let member = family.findMember(person) {
@@ -709,7 +717,8 @@ final class EmberToolbox {
     private func addFamilyEvent(title: String, when: String, minutes: Double?, location: String, who: String) async -> String {
         guard !title.isEmpty else { return "Ask what the event is." }
         guard let start = EmberDates.moment(when) else { return "Ask when it is." }
-        guard case .success(let family) = await data.familyBoard() else { return "Caloma's family calendar isn't in iCloud yet." }
+        let loaded = await data.familyBoard()
+        guard case .success(let family) = loaded else { return Self.reason(loaded, fallback: "Caloma's family calendar isn't in iCloud yet.") }
         let hasTime = when.rangeOfCharacter(from: .decimalDigits) != nil || ["noon", "morning", "evening", "afternoon", "tonight"].contains { when.lowercased().contains($0) }
         let isAllDay = !hasTime
         let end = isAllDay ? (Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start) : start.addingTimeInterval((minutes ?? 60) * 60)

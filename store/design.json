@@ -1,0 +1,524 @@
+{
+  "accentHex" : "#FF9230",
+  "ascAppID" : "",
+  "ascAppName" : "",
+  "inkHex" : "",
+  "listings" : {
+
+  },
+  "live" : {
+
+  },
+  "locale" : "en-US",
+  "sets" : {
+    "artHeader" : {
+      "captures" : [
+
+      ],
+      "devices" : [
+        {
+          "aspect" : 1,
+          "baseWidth" : 0,
+          "capture" : "",
+          "flipped" : false,
+          "groupID" : "EDCAE1DB-ACD2-47B1-8C53-519968DFE5D0",
+          "hidden" : false,
+          "id" : "FDC8A60D-0137-4695-A5B8-9FF410BAF922",
+          "imagePath" : "",
+          "kind" : "device",
+          "locked" : false,
+          "name" : "",
+          "opacity" : 1,
+          "renderID" : "render-f6bcd037",
+          "rotation" : 0,
+          "scale" : 1.5868051020127742,
+          "shadow" : true,
+          "x" : 1606,
+          "y" : 341
+        },
+        {
+          "aspect" : 1,
+          "baseWidth" : 0,
+          "capture" : "",
+          "flipped" : false,
+          "groupID" : "EDCAE1DB-ACD2-47B1-8C53-519968DFE5D0",
+          "hidden" : false,
+          "id" : "6E241282-0D4A-4743-9523-EE7193F326DA",
+          "imagePath" : "",
+          "kind" : "device",
+          "locked" : false,
+          "name" : "",
+          "opacity" : 1,
+          "renderID" : "render-f6bcd037",
+          "rotation" : 0,
+          "scale" : 1.8014096265771122,
+          "shadow" : true,
+          "x" : 2517,
+          "y" : 462
+        },
+        {
+          "aspect" : 1,
+          "baseWidth" : 0,
+          "capture" : "",
+          "flipped" : false,
+          "groupID" : "EDCAE1DB-ACD2-47B1-8C53-519968DFE5D0",
+          "hidden" : false,
+          "id" : "9151A1F2-7B7D-427D-A003-0373A1E85D86",
+          "imagePath" : "",
+          "kind" : "device",
+          "locked" : false,
+          "name" : "",
+          "opacity" : 1,
+          "renderID" : "render-f6bcd037",
+          "rotation" : 0,
+          "scale" : 1.8901497118467723,
+          "shadow" : true,
+          "x" : 2067,
+          "y" : 25
+        }
+      ],
+      "frames" : [
+        {
+          "id" : "7FFF5986-19F8-4A7B-BC2F-D9E64E2BFE95",
+          "line1" : "Ember",
+          "line2" : "[Headline]",
+          "look" : "accent",
+          "showIcon" : false,
+          "subhead" : ""
+        }
+      ],
+      "layerGroups" : [
+        {
+          "id" : "EDCAE1DB-ACD2-47B1-8C53-519968DFE5D0",
+          "name" : "Group 1"
+        }
+      ],
+      "linked" : [
+
+      ],
+      "publish" : true
+    },
+    "artSearch" : {
+      "captures" : [
+
+      ],
+      "devices" : [
+        {
+          "aspect" : 1,
+          "baseWidth" : 0,
+          "capture" : "",
+          "flipped" : false,
+          "hidden" : false,
+          "id" : "C99E8BB4-EDED-44B3-B1B8-A747E8339152",
+          "imagePath" : "",
+          "kind" : "device",
+          "locked" : false,
+          "name" : "",
+          "opacity" : 1,
+          "renderID" : "render-f6bcd037",
+          "rotation" : 0,
+          "scale" : 1.9270638416783026,
+          "shadow" : true,
+          "x" : 1596.4314803244897,
+          "y" : 581.9999999999999
+        },
+        {
+          "aspect" : 1,
+          "baseWidth" : 0,
+          "capture" : "",
+          "flipped" : false,
+          "hidden" : false,
+          "id" : "9ED7843B-F066-4CFA-83D4-E980747549A4",
+          "imagePath" : "",
+          "kind" : "device",
+          "locked" : false,
+          "name" : "",
+          "opacity" : 1,
+          "renderID" : "render-f6bcd037",
+          "rotation" : 0,
+          "scale" : 1.9855162474480224,
+          "shadow" : true,
+          "x" : 2790,
+          "y" : 829
+        },
+        {
+          "aspect" : 1,
+          "baseWidth" : 0,
+          "capture" : "",
+          "flipped" : false,
+          "hidden" : false,
+          "id" : "CB94E06B-0756-48F5-A3A0-6B4C8990CF44",
+          "imagePath" : "",
+          "kind" : "device",
+          "locked" : false,
+          "name" : "",
+          "opacity" : 1,
+          "renderID" : "render-f6bcd037",
+          "rotation" : 0,
+          "scale" : 2.15,
+          "shadow" : true,
+          "x" : 2240,
+          "y" : 170
+        }
+      ],
+      "frames" : [
+        {
+          "id" : "4FF05EE1-2BE9-40B6-8419-23FFA224485B",
+          "line1" : "Ember",
+          "line2" : "[Headline]",
+          "look" : "tint",
+          "showIcon" : true,
+          "subhead" : "[One line about the app]"
+        }
+      ],
+      "layerGroups" : [
+
+      ],
+      "linked" : [
+
+      ],
+      "publish" : true
+    },
+    "duoOuter" : {
+      "captures" : [
+
+      ],
+      "devices" : [
+        {
+          "aspect" : 1,
+          "baseWidth" : 0,
+          "capture" : "",
+          "flipped" : false,
+          "hidden" : false,
+          "id" : "368D8449-0403-4420-B135-B1FF1AA78E44",
+          "imagePath" : "",
+          "kind" : "device",
+          "locked" : false,
+          "name" : "",
+          "opacity" : 1,
+          "renderID" : "render-13c1dea3",
+          "rotation" : 0,
+          "scale" : 1.977205539639103,
+          "shadow" : true,
+          "x" : 140,
+          "y" : 639
+        },
+        {
+          "aspect" : 1,
+          "baseWidth" : 0,
+          "capture" : "",
+          "flipped" : false,
+          "hidden" : false,
+          "id" : "D0F5DE56-FF3D-4A10-9611-51F26FE367D9",
+          "imagePath" : "",
+          "kind" : "device",
+          "locked" : false,
+          "name" : "",
+          "opacity" : 1,
+          "renderID" : "render-f7e3c805",
+          "rotation" : 0,
+          "scale" : 1,
+          "shadow" : true,
+          "x" : 1857,
+          "y" : 544
+        },
+        {
+          "aspect" : 1,
+          "baseWidth" : 0,
+          "capture" : "",
+          "flipped" : false,
+          "hidden" : false,
+          "id" : "656810AC-1F3A-45D5-A0C8-45412CF05D5E",
+          "imagePath" : "",
+          "kind" : "device",
+          "locked" : false,
+          "name" : "",
+          "opacity" : 1,
+          "renderID" : "render-f7e3c805",
+          "rotation" : 0,
+          "scale" : 1.2512193589706353,
+          "shadow" : true,
+          "x" : 3020,
+          "y" : 520
+        }
+      ],
+      "frames" : [
+        {
+          "id" : "67D9130C-0615-4A84-97C6-9300A0BF8EA1",
+          "line1" : "Ember",
+          "line2" : "[Headline]",
+          "look" : "accent",
+          "showIcon" : true,
+          "subhead" : "[One line about the app]"
+        },
+        {
+          "id" : "2A7A8B52-2830-470D-B114-906C4A0813EA",
+          "line1" : "[Feature]",
+          "line2" : "[in a few words.]",
+          "look" : "tint",
+          "showIcon" : false,
+          "subhead" : ""
+        },
+        {
+          "id" : "DF0B3B8B-F406-4035-A73B-9586CA3D4415",
+          "line1" : "[Feature]",
+          "line2" : "[in a few words.]",
+          "look" : "tint",
+          "showIcon" : false,
+          "subhead" : ""
+        }
+      ],
+      "layerGroups" : [
+
+      ],
+      "linked" : [
+        true,
+        false
+      ],
+      "publish" : false
+    },
+    "ipad" : {
+      "captures" : [
+
+      ],
+      "devices" : [
+        {
+          "aspect" : 1,
+          "baseWidth" : 0,
+          "capture" : "",
+          "flipped" : false,
+          "hidden" : false,
+          "id" : "544D48D0-ADB8-4497-BB33-44202BC222ED",
+          "imagePath" : "",
+          "kind" : "device",
+          "locked" : false,
+          "name" : "",
+          "opacity" : 1,
+          "renderID" : "render-d9393411",
+          "rotation" : 0,
+          "scale" : 1.329356931626691,
+          "shadow" : true,
+          "x" : 419,
+          "y" : 765
+        },
+        {
+          "aspect" : 1,
+          "baseWidth" : 0,
+          "capture" : "",
+          "flipped" : false,
+          "hidden" : false,
+          "id" : "E6EFF62C-3C89-4CFB-A368-CED82B4BE1F4",
+          "imagePath" : "",
+          "kind" : "device",
+          "locked" : false,
+          "name" : "",
+          "opacity" : 1,
+          "renderID" : "render-261559ba",
+          "rotation" : 0,
+          "scale" : 1.3029918214678682,
+          "shadow" : true,
+          "x" : 4209,
+          "y" : 610
+        },
+        {
+          "aspect" : 1,
+          "baseWidth" : 0,
+          "capture" : "",
+          "flipped" : false,
+          "hidden" : false,
+          "id" : "B6FBB52E-0C13-4073-8B65-71C733CC21EF",
+          "imagePath" : "",
+          "kind" : "device",
+          "locked" : false,
+          "name" : "",
+          "opacity" : 1,
+          "renderID" : "render-d9393411",
+          "rotation" : 0,
+          "scale" : 1.4471402955943038,
+          "shadow" : true,
+          "x" : 1876,
+          "y" : 608
+        }
+      ],
+      "frames" : [
+        {
+          "id" : "42FFD8CD-57D3-4849-8CDB-786FF802FBF2",
+          "line1" : "Ember",
+          "line2" : "[Headline]",
+          "look" : "accent",
+          "showIcon" : true,
+          "subhead" : "[One line about the app]"
+        },
+        {
+          "id" : "7CEB2331-07D0-451B-85DE-A1F84248F6BE",
+          "line1" : "[Feature]",
+          "line2" : "[in a few words.]",
+          "look" : "tint",
+          "showIcon" : false,
+          "subhead" : ""
+        },
+        {
+          "id" : "47B0F370-9906-48E7-8B0E-FB4A778F2251",
+          "line1" : "[Feature]",
+          "line2" : "[in a few words.]",
+          "look" : "tint",
+          "showIcon" : false,
+          "subhead" : ""
+        }
+      ],
+      "layerGroups" : [
+
+      ],
+      "linked" : [
+        true,
+        false
+      ],
+      "publish" : false
+    },
+    "iphone" : {
+      "captures" : [
+
+      ],
+      "devices" : [
+        {
+          "aspect" : 1,
+          "baseWidth" : 0,
+          "capture" : "",
+          "flipped" : false,
+          "hidden" : false,
+          "id" : "9E04195D-DFDC-4AF4-97FB-3AAA5035EDE2",
+          "imagePath" : "",
+          "kind" : "device",
+          "locked" : false,
+          "name" : "",
+          "opacity" : 1,
+          "renderID" : "render-f6bcd037",
+          "rotation" : 0,
+          "scale" : 1.85,
+          "shadow" : true,
+          "x" : 787,
+          "y" : 746
+        },
+        {
+          "aspect" : 1,
+          "baseWidth" : 0,
+          "capture" : "",
+          "flipped" : false,
+          "hidden" : false,
+          "id" : "42D6926A-FFC0-48BE-9942-A397BE965E9B",
+          "imagePath" : "",
+          "kind" : "device",
+          "locked" : false,
+          "name" : "",
+          "opacity" : 1,
+          "renderID" : "render-f6bcd037",
+          "rotation" : 0,
+          "scale" : 1.85,
+          "shadow" : true,
+          "x" : -188,
+          "y" : 732
+        },
+        {
+          "aspect" : 1,
+          "baseWidth" : 0,
+          "capture" : "",
+          "flipped" : false,
+          "hidden" : false,
+          "id" : "E99E1CC5-CF0A-417F-A4EE-3A5F4A0DEB52",
+          "imagePath" : "",
+          "kind" : "device",
+          "locked" : false,
+          "name" : "",
+          "opacity" : 1,
+          "renderID" : "render-041fceb4",
+          "rotation" : 0,
+          "scale" : 1,
+          "shadow" : true,
+          "x" : 2778,
+          "y" : 617
+        },
+        {
+          "aspect" : 1,
+          "baseWidth" : 0,
+          "capture" : "",
+          "flipped" : false,
+          "hidden" : false,
+          "id" : "D23BD540-4F04-4098-9928-985A5977E763",
+          "imagePath" : "",
+          "kind" : "device",
+          "locked" : false,
+          "name" : "",
+          "opacity" : 1,
+          "renderID" : "render-4d02fad1",
+          "rotation" : 0,
+          "scale" : 1,
+          "shadow" : true,
+          "x" : 4098,
+          "y" : 484
+        }
+      ],
+      "frames" : [
+        {
+          "id" : "F287F033-C133-485A-BBA1-EF0CD1EF787C",
+          "line1" : "Ember",
+          "line2" : "[Headline]",
+          "look" : "accent",
+          "showIcon" : true,
+          "subhead" : "[One line about the app]"
+        },
+        {
+          "id" : "63B3C13F-F2D6-4E8C-8215-BFA838DDCB8E",
+          "line1" : "[Feature]",
+          "line2" : "[in a few words.]",
+          "look" : "tint",
+          "showIcon" : false,
+          "subhead" : ""
+        },
+        {
+          "id" : "3FF95E04-766D-4AB5-8102-D9B89DC63F5B",
+          "line1" : "[Feature]",
+          "line2" : "[in a few words.]",
+          "look" : "tint",
+          "showIcon" : false,
+          "subhead" : ""
+        },
+        {
+          "id" : "44BAA6A6-8644-4D1C-A414-D747F6AFBB4C",
+          "line1" : "[Headline]",
+          "line2" : "[Second line]",
+          "look" : "tint",
+          "showIcon" : false,
+          "subhead" : ""
+        }
+      ],
+      "layerGroups" : [
+
+      ],
+      "linked" : [
+        true,
+        false,
+        false
+      ],
+      "publish" : true
+    },
+    "watch" : {
+      "captures" : [
+
+      ],
+      "devices" : [
+
+      ],
+      "frames" : [
+
+      ],
+      "layerGroups" : [
+
+      ],
+      "linked" : [
+
+      ],
+      "publish" : false
+    }
+  },
+  "tintHex" : ""
+}
