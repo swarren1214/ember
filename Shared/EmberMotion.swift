@@ -19,42 +19,10 @@ import WatchKit
 // Every motion comes from the clock (TimelineView), so nothing keeps running between frames and
 // nothing can freeze after the screen dims; frames pause while the Watch is dimmed.
 
-enum EmberPalette {
-    /// BigTable, Sated, Suffice, Hearken, Caloma (the lighter tints, for a dark background).
-    static let colors: [Color] = [
-        Color(red: 1.0, green: 0.518, blue: 0.4),     // #FF8466
-        Color(red: 1.0, green: 0.706, blue: 0.259),   // #FFB442
-        Color(red: 0.271, green: 0.839, blue: 0.608), // #45D69B
-        Color(red: 0.353, green: 0.663, blue: 1.0),   // #5AA9FF
-        Color(red: 1.0, green: 0.435, blue: 0.557),   // #FF6F8E
-    ]
-
-    static var wheel: AngularGradient {
-        AngularGradient(colors: colors + [colors[0]], center: .center)
-    }
-}
-
-// MARK: - Baked blur
-
-/// Soft shapes blurred once into a picture, kept for reuse.
-@MainActor
-enum EmberBaked {
-    private static var cache: [String: Image] = [:]
-
-    static func image<Content: View>(_ key: String, size: CGSize, @ViewBuilder _ content: () -> Content) -> Image? {
-        let fullKey = "\(key)-\(Int(size.width))x\(Int(size.height))"
-        if let cached = cache[fullKey] { return cached }
-        guard size.width > 1, size.height > 1 else { return nil }
-        let renderer = ImageRenderer(content: content().frame(width: size.width, height: size.height))
-        // Soft shapes need few pixels.
-        renderer.scale = 1.5
-        guard let cgImage = renderer.cgImage else { return nil }
-        let image = Image(decorative: cgImage, scale: renderer.scale)
-        if cache.count > 40 { cache.removeAll() }
-        cache[fullKey] = image
-        return image
-    }
-}
+// The palette, the baked blur and the level meter live in HearthKit (HearthOrb.swift).
+typealias EmberPalette = HearthOrbPalette
+typealias EmberBaked = HearthBaked
+typealias EmberLevelMeter = HearthLevelMeter
 
 /// How often frames are drawn: 60 a second on iPhone, 30 on the Watch.
 private enum MotionClock {
@@ -316,18 +284,5 @@ struct HearthMicRing: View {
             }
         }
         .frame(width: size, height: size)
-    }
-}
-
-/// The microphone's loudness for the animations, written on the audio thread and read each
-/// frame. Not observed: animations redraw on their own clock.
-nonisolated final class EmberLevelMeter: @unchecked Sendable {
-    static let shared = EmberLevelMeter()
-    private let lock = NSLock()
-    private var stored = 0.0
-
-    var value: Double {
-        get { lock.withLock { stored } }
-        set { lock.withLock { stored = newValue } }
     }
 }
