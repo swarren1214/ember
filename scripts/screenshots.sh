@@ -21,14 +21,14 @@
 #                                     Any Simulator model works, iPads included.
 #   DEVICE_TYPE="iPhone Duo"          The foldable: captures its outer display (folded) and its inner
 #                                     display (unfolded), in <device>-Outer and <device>-Inner folders.
-#                                     Folding uses app-manager/tools/duo-hinge.m (built with clang).
+#                                     Folding uses hearth-ship/tools/duo-hinge.m (built with clang).
 #   DEVICE_TYPE="Apple Watch Ultra 3 (49mm)"
 #                                     An Apple Watch: captures the watch app's screens (watchOS is
 #                                     always dark). Screen names given are the watch app's.
 #   APPEARANCES="light"               "light", "dark" or "light dark" (default).
 #   ORIENTATIONS="portrait landscape" "portrait" (default), "landscape" or both. Landscape is
-#                                     for iPads (the app is portrait only on iPhone) and saved in
-#                                     <appearance>-landscape folders. It turns the Simulator
+#                                     for iPads and the iPhone Duo (both displays; other iPhones are
+#                                     portrait only) and saved in <appearance>-landscape folders. It turns the Simulator
 #                                     through its Device menu, which needs Accessibility access.
 #   SHUTDOWN=1                        Shut the Simulator down when done.
 #   WARMUP=12                         Seconds the warm-up launch gets before capturing starts.
@@ -214,7 +214,7 @@ rotate() {
 }
 
 # Folds or unfolds the iPhone Duo ("closed" shows the outer display, "flat" the inner one).
-# Xcode has no command for this, so it uses duo-hinge (app-manager/tools/duo-hinge.m), which
+# Xcode has no command for this, so it uses duo-hinge (hearth-ship/tools/duo-hinge.m), which
 # sends the Simulator the same message Device Hub's fold controls do. It's built with clang
 # the first time. DUO_HINGE can point at another build of it.
 fold() {
@@ -222,7 +222,7 @@ fold() {
     if [[ -n "${DUO_HINGE:-}" ]]; then
       HINGE="$DUO_HINGE"
     else
-      local source="$ROOT/../app-manager/tools/duo-hinge.m"
+      local source="$ROOT/../hearth-ship/tools/duo-hinge.m"
       local cache="$HOME/Library/Caches/HearthShip"
       HINGE="$cache/duo-hinge"
       if [[ ! -f "$source" ]]; then
@@ -523,11 +523,11 @@ device_dir="$(echo "$DEVICE_NAME" | tr ' ' '-')"
 if [[ -n "$WEB" ]]; then WEB="$(mkdir -p "$WEB" && cd "$WEB" && pwd)"; fi
 
 # What each pass captures: the orientations asked for, or on the iPhone Duo its two
-# displays (outer folded, inner unfolded), in portrait.
+# displays (outer folded, inner unfolded) in each orientation asked for.
 if [[ -n "$DUO" ]]; then
-  PASSES="outer inner"
-  [[ " $ORIENTATIONS " == *" portrait "* ]] || PASSES=""
-  [[ -n "$PASSES" ]] || { echo "The iPhone Duo is captured in portrait. Add portrait to ORIENTATIONS."; event skipped landscape "$DEVICE_NAME"; }
+  PASSES=""
+  [[ " $ORIENTATIONS " == *" portrait "* ]] && PASSES="outer inner"
+  [[ " $ORIENTATIONS " == *" landscape "* ]] && PASSES="$PASSES outer-landscape inner-landscape"
 else
   PASSES="$ORIENTATIONS"
 fi
@@ -550,11 +550,18 @@ for pass in $PASSES; do
     portrait)
       rotate portrait
       ;;
-    outer)
+    outer|outer-landscape)
+      rotate portrait
       fold closed || echo "  (couldn't confirm the iPhone Duo is folded; capturing the outer display anyway)"
       folder="$OUT/$device_dir-Outer"
+      if [[ "$pass" == outer-landscape ]]; then
+        rotate landscape
+        orientation="landscape"
+        suffix="-landscape"
+      fi
       ;;
-    inner)
+    inner|inner-landscape)
+      rotate portrait
       if ! fold flat; then
         echo "Skipping the iPhone Duo's inner display: it couldn't be unfolded."
         event skipped inner "$DEVICE_NAME"
@@ -562,6 +569,11 @@ for pass in $PASSES; do
       fi
       display="inner"
       folder="$OUT/$device_dir-Inner"
+      if [[ "$pass" == inner-landscape ]]; then
+        rotate landscape
+        orientation="inner-landscape"
+        suffix="-landscape"
+      fi
       ;;
   esac
 
@@ -596,6 +608,8 @@ for pass in $PASSES; do
           sips --rotate "$LANDSCAPE_ROTATION" "$file" >/dev/null
         elif [[ "$orientation" == inner && "$width" -gt "$height" ]]; then
           sips --rotate "$DUO_INNER_ROTATION" "$file" >/dev/null
+        elif [[ "$orientation" == inner-landscape && "$height" -gt "$width" ]]; then
+          sips --rotate "$LANDSCAPE_ROTATION" "$file" >/dev/null
         fi
       fi
       echo "  $screen  →  ${file#$ROOT/}"
